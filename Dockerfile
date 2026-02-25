@@ -1,8 +1,9 @@
 FROM node:20-slim
 
-# Instalar dependencias del sistema para Chrome
+# Instalar dependencias del sistema, Chrome y Xvfb
 RUN apt-get update && apt-get install -y \
     wget gnupg ca-certificates apt-transport-https \
+    xvfb x11vnc x11-xkb-utils xfonts-100dpi xfonts-75dpi xfonts-scalable xfonts-cyrillic \
     fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 \
     libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 \
     libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
@@ -11,21 +12,16 @@ RUN apt-get update && apt-get install -y \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 \
     libxtst6 lsb-release xdg-utils --no-install-recommends
 
-# Instalar Chrome Estable
+# Instalar Chrome
 RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
     && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
     && apt-get update && apt-get install -y google-chrome-stable --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# Saltamos la descarga de Puppeteer en el install
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
-
 COPY package*.json ./
-RUN npm install --loglevel verbose
-
+RUN npm install
 COPY . .
 
-CMD ["node", "worker.js"]
+# Comando especial para arrancar con pantalla virtual
+CMD ["xvfb-run", "--server-args=-screen 0 1920x1080x24", "node", "worker.js"]
