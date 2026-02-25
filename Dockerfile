@@ -1,18 +1,27 @@
-FROM node:20
+FROM ghcr.io/puppeteer/puppeteer:latest
 
-# Instalamos librerías necesarias para que Chrome corra en Linux
-RUN apt-get update && apt-get install -y \
-    wget gnupg ca-certificates procps libxss1 \
-    libasound2 libnss3 lsb-release xdg-utils \
-    fonts-liberation libgbm1 \
-    --no-install-recommends && rm -rf /var/lib/apt/lists/*
+USER root
 
 WORKDIR /app
+
+# Instalamos dependencias del sistema necesarias
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
+    ca-certificates \
+    --no-install-recommends
+
+# Copiamos archivos de dependencias
 COPY package*.json ./
+
+# Instalamos librerías de Node
 RUN npm install
-RUN npx puppeteer install
+
+# Copiamos el resto del código
 COPY . .
 
-# El worker también necesita un puerto para que Render lo vea "vivo"
+# Puerto que configuramos en Render
 EXPOSE 10000
+
+# Comando para arrancar el Worker
 CMD ["node", "worker.js"]
