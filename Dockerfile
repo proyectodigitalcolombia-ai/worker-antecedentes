@@ -1,6 +1,6 @@
 FROM node:20-bookworm
 
-# 1. Instalamos dependencias incluyendo FUENTES (crítico para Xvfb)
+# 1. Instalamos dependencias (incluyendo xfonts y xauth)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget gnupg ca-certificates xvfb xauth x11-xkb-utils x11-utils dbus-x11 \
     xfonts-base xfonts-75dpi xfonts-100dpi \
@@ -17,10 +17,11 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --d
 
 WORKDIR /app
 
+# Variables de entorno
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
-ENV NODE_VERSION=20
 ENV DISPLAY=:99
+ENV NODE_VERSION=20
 
 COPY package*.json ./
 RUN npm install
@@ -29,5 +30,6 @@ COPY . .
 
 EXPOSE 10000
 
-# 3. Lanzamiento manual: Limpia, arranca Xvfb en el fondo y luego arranca Node
-CMD Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset & node worker.js
+# 3. COMANDO DE ARRANQUE ROBUSTO
+# Limpia locks, lanza Xvfb, espera 2 segundos y lanza Node
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset & sleep 2 && node worker.js"]
