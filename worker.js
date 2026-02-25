@@ -31,7 +31,7 @@ async function procesar() {
             });
 
             const page = await browser.newPage();
-            await page.setViewport({ width: 1280, height: 900 });
+            await page.setViewport({ width: 1280, height: 800 });
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
             try {
@@ -41,69 +41,60 @@ async function procesar() {
                     timeout: 60000 
                 });
 
-                await new Promise(r => setTimeout(r, 15000));
+                await new Promise(r => setTimeout(r, 12000));
 
-                // 1. Localización ultra-precisa del checkbox
-                const coords = await page.evaluate(() => {
-                    // Buscamos el div contenedor de PrimeFaces que tiene el check
-                    const box = document.querySelector('.ui-chkbox-box');
-                    if (box) {
-                        const rect = box.getBoundingClientRect();
-                        return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+                console.log("🛠️ Inyectando estado de aceptación...");
+                await page.evaluate(() => {
+                    // 1. Forzamos el checkbox a nivel visual y de datos
+                    const chkBox = document.querySelector('.ui-chkbox-box');
+                    if (chkBox) {
+                        chkBox.classList.add('ui-state-active');
+                        const icon = chkBox.querySelector('.ui-chkbox-icon');
+                        if (icon) icon.classList.replace('ui-icon-blank', 'ui-icon-check');
                     }
-                    // Fallback al texto si la clase falla
-                    const label = Array.from(document.querySelectorAll('label, span')).find(e => e.innerText.includes('Acepto'));
-                    if (label) {
-                        const rect = label.getBoundingClientRect();
-                        return { x: rect.left - 15, y: rect.top + (rect.height / 2) };
+                    
+                    // 2. Buscamos el input oculto que realmente manda el dato al servidor
+                    const hiddenInput = document.querySelector('input[type="checkbox"][id*="acepto"]');
+                    if (hiddenInput) {
+                        hiddenInput.checked = true;
+                        hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
                     }
-                    return null;
                 });
 
-                if (coords) {
-                    console.log(`⚖️ Interactuando con Checkbox en: X:${Math.round(coords.x)} Y:${Math.round(coords.y)}`);
-                    await page.mouse.move(coords.x, coords.y);
-                    await new Promise(r => setTimeout(r, 500));
-                    await page.mouse.click(coords.x, coords.y);
-                    
-                    console.log("⏳ Esperando respuesta de términos (AJAX)...");
-                    await new Promise(r => setTimeout(r, 5000)); 
-                }
+                // Click físico por si acaso (usando tus coordenadas exitosas)
+                await page.mouse.click(508, 547);
+                await new Promise(r => setTimeout(r, 3000));
 
-                // 2. Envío del formulario con doble método
-                console.log("🚀 Ejecutando envío del formulario...");
+                console.log("🚀 Disparando botón Enviar...");
                 await page.evaluate(() => {
-                    const btn = document.querySelector('button[id*="continuar"]') || 
-                                document.querySelector('.ui-button') ||
-                                Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Enviar'));
+                    const btn = Array.from(document.querySelectorAll('button, .ui-button'))
+                                     .find(b => b.innerText.includes('Enviar'));
                     if (btn) {
-                        btn.scrollIntoView();
+                        btn.removeAttribute('disabled');
                         btn.click();
                     }
                 });
 
                 await new Promise(r => setTimeout(r, 8000));
                 
-                // 3. Validación de cambio de página
-                const resultado = await page.evaluate(() => {
-                    const cedulaInput = document.querySelector('input[id*="documento"]') || document.querySelector('input[type="text"]');
+                const final = await page.evaluate(() => {
+                    const inp = document.querySelector('input[id*="cedula"]') || document.querySelector('input[type="text"]');
                     return {
-                        exito: !!cedulaInput && document.body.innerText.includes('Documento'),
-                        textoBody: document.body.innerText.substring(0, 100)
+                        exito: !!inp,
+                        html: document.body.innerText.substring(0, 50)
                     };
                 });
 
-                if (resultado.exito) {
+                if (final.exito) {
                     console.log("📝 ¡FORMULARIO DE CÉDULA ALCANZADO!");
                 } else {
-                    console.log(`⚠️ No hubo transición. Contenido: "${resultado.textoBody.replace(/\n/g, ' ')}..."`);
-                    console.log("⌨️ Reintento forzado con Enter...");
+                    console.log("⚠️ Intento final con Enter...");
                     await page.keyboard.press('Enter');
                     await new Promise(r => setTimeout(r, 5000));
                 }
 
             } catch (err) {
-                console.error(`❌ Error en el proceso: ${err.message}`);
+                console.error(`❌ Error: ${err.message}`);
             }
 
             await browser.close();
