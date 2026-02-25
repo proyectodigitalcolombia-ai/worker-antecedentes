@@ -1,27 +1,19 @@
-FROM ghcr.io/puppeteer/puppeteer:latest
+# Usamos una imagen que ya tiene Chrome y Node instalados
+FROM ghcr.io/puppeteer/puppeteer:21.11.0
 
 USER root
 
 WORKDIR /app
 
-# Instalamos dependencias del sistema necesarias
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    ca-certificates \
-    --no-install-recommends
-
-# Copiamos archivos de dependencias
+# Copiamos solo lo necesario primero para aprovechar el cache
 COPY package*.json ./
-
-# Instalamos librerías de Node
 RUN npm install
 
 # Copiamos el resto del código
 COPY . .
 
-# Puerto que configuramos en Render
+# El puerto que configuraste en Render
 EXPOSE 10000
 
-# Comando para arrancar el Worker
+# Comando para iniciar
 CMD ["node", "worker.js"]
