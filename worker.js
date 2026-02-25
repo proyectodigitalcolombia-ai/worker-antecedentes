@@ -6,7 +6,7 @@ import redis from 'redis';
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
-app.listen(PORT, '0.0.0.0', () => console.log(`✅ Servidor de salud activo`));
+app.listen(PORT, '0.0.0.0', () => console.log(`✅ Worker en línea`));
 
 puppeteer.use(StealthPlugin());
 const client = redis.createClient({ url: process.env.REDIS_URL });
@@ -14,7 +14,7 @@ const client = redis.createClient({ url: process.env.REDIS_URL });
 async function procesar() {
     try {
         if (!client.isOpen) await client.connect();
-        console.log("✅ Conectado a Redis. Esperando tareas...");
+        console.log("✅ Conectado a Redis.");
 
         while (true) {
             const tareaRaw = await client.brPop('cola_consultas', 0);
@@ -31,70 +31,67 @@ async function procesar() {
             });
 
             const page = await browser.newPage();
-            await page.setViewport({ width: 1280, height: 800 });
+            await page.setViewport({ width: 1280, height: 900 });
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
             try {
                 console.log("👮 Navegando a puerto 7005...");
                 await page.goto('https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml', { 
-                    waitUntil: 'networkidle2', 
+                    waitUntil: 'load', 
                     timeout: 60000 
                 });
 
-                await new Promise(r => setTimeout(r, 12000));
+                // 1. Espera de estabilización
+                await new Promise(r => setTimeout(r, 15000));
 
-                console.log("🛠️ Inyectando estado de aceptación...");
+                console.log("🛠️ Inyectando aceptación mediante script de PrimeFaces...");
                 await page.evaluate(() => {
-                    // 1. Forzamos el checkbox a nivel visual y de datos
-                    const chkBox = document.querySelector('.ui-chkbox-box');
-                    if (chkBox) {
-                        chkBox.classList.add('ui-state-active');
-                        const icon = chkBox.querySelector('.ui-chkbox-icon');
-                        if (icon) icon.classList.replace('ui-icon-blank', 'ui-icon-check');
-                    }
+                    // Marcamos el checkbox internamente
+                    const chk = document.querySelector('.ui-chkbox-box');
+                    if (chk) chk.click();
                     
-                    // 2. Buscamos el input oculto que realmente manda el dato al servidor
-                    const hiddenInput = document.querySelector('input[type="checkbox"][id*="acepto"]');
-                    if (hiddenInput) {
-                        hiddenInput.checked = true;
-                        hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                });
-
-                // Click físico por si acaso (usando tus coordenadas exitosas)
-                await page.mouse.click(508, 547);
-                await new Promise(r => setTimeout(r, 3000));
-
-                console.log("🚀 Disparando botón Enviar...");
-                await page.evaluate(() => {
-                    const btn = Array.from(document.querySelectorAll('button, .ui-button'))
-                                     .find(b => b.innerText.includes('Enviar'));
+                    // Buscamos el botón y forzamos su ejecución
+                    const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Enviar'));
                     if (btn) {
                         btn.removeAttribute('disabled');
-                        btn.click();
+                        // Disparamos el evento de PrimeFaces directamente
+                        if (typeof PrimeFaces !== 'undefined') {
+                            const formId = btn.closest('form').id;
+                            PrimeFaces.ab({s: btn.id, f: formId, u: '@all'});
+                        } else {
+                            btn.click();
+                        }
                     }
                 });
 
-                await new Promise(r => setTimeout(r, 8000));
+                // Espera larga para la transición de red
+                console.log("⏳ Esperando respuesta del servidor de la Policía...");
+                await new Promise(r => setTimeout(r, 10000));
                 
-                const final = await page.evaluate(() => {
-                    const inp = document.querySelector('input[id*="cedula"]') || document.querySelector('input[type="text"]');
+                // 2. Verificación agresiva
+                const resultado = await page.evaluate(() => {
+                    const found = !!document.querySelector('input[id*="cedula"]') || 
+                                  !!document.querySelector('input[id*="documento"]') ||
+                                  document.body.innerText.includes('Cédula');
                     return {
-                        exito: !!inp,
-                        html: document.body.innerText.substring(0, 50)
+                        exito: found,
+                        url: window.location.href,
+                        preview: document.body.innerText.substring(0, 100).replace(/\n/g, ' ')
                     };
                 });
 
-                if (final.exito) {
-                    console.log("📝 ¡FORMULARIO DE CÉDULA ALCANZADO!");
+                if (resultado.exito) {
+                    console.log("🚀 ¡ÉXITO! Formulario de consulta alcanzado.");
                 } else {
-                    console.log("⚠️ Intento final con Enter...");
+                    console.log(`⚠️ Fallo en transición. URL actual: ${resultado.url}`);
+                    console.log(`📝 Contenido: "${resultado.preview}..."`);
+                    console.log("⌨️ Reintento final: Enter");
                     await page.keyboard.press('Enter');
                     await new Promise(r => setTimeout(r, 5000));
                 }
 
             } catch (err) {
-                console.error(`❌ Error: ${err.message}`);
+                console.error(`❌ Error en flujo: ${err.message}`);
             }
 
             await browser.close();
