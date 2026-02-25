@@ -42,42 +42,66 @@ async function procesar() {
                     timeout: 60000 
                 });
 
-                await new Promise(r => setTimeout(r, 12000));
+                // ESPERA CRÍTICA: Esperamos a que aparezca cualquier botón en la página
+                console.log("⏳ Esperando a que el formulario se renderice...");
+                try {
+                    await page.waitForSelector('button, .ui-button, input[type="submit"]', { timeout: 20000 });
+                } catch (e) {
+                    console.log("⚠️ Timeout esperando selectores, intentando búsqueda manual...");
+                }
+
+                await new Promise(r => setTimeout(r, 5000)); // Respiro extra para scripts
 
                 const resultado = await page.evaluate(() => {
-                    // 1. Buscamos cualquier cosa que parezca un checkbox de PrimeFaces
-                    const possibleChecks = document.querySelectorAll('.ui-chkbox-box, .ui-chkbox, div[class*="chkbox"]');
-                    const check = possibleChecks[0];
+                    // Buscamos el checkbox por múltiples vías
+                    const check = document.querySelector('.ui-chkbox-box') || 
+                                  document.querySelector('div[id*="acepto"]') || 
+                                  document.querySelector('input[type="checkbox"]');
                     
-                    // 2. Buscamos cualquier botón que diga "Aceptar"
-                    const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], .ui-button'));
-                    const btn = buttons.find(b => b.textContent.includes('Aceptar') || (b.value && b.value.includes('Aceptar')));
+                    // Buscamos el botón "Aceptar" por texto (insensible a mayúsculas)
+                    const botones = Array.from(document.querySelectorAll('button, input[type="submit"], .ui-button'));
+                    const btn = botones.find(b => {
+                        const txt = (b.textContent || b.value || "").toLowerCase();
+                        return txt.includes('aceptar');
+                    });
 
                     if (check && btn) {
+                        check.scrollIntoView();
                         check.click();
-                        return { found: true, msg: "Elementos encontrados y clicados" };
+                        return { found: true, btnId: btn.id };
                     }
                     
                     return { 
                         found: false, 
                         totalDivs: document.querySelectorAll('div').length,
-                        iframes: document.querySelectorAll('iframe').length,
-                        textSnippet: document.body.innerText.substring(0, 100)
+                        totalButtons: botones.length,
+                        body: document.body.innerText.substring(0, 50)
                     };
                 });
 
                 if (resultado.found) {
-                    console.log("⚖️ Checkbox y Botón accionados.");
-                    await new Promise(r => setTimeout(r, 2000));
+                    console.log("⚖️ Checkbox marcado. Clickeando botón...");
+                    await new Promise(r => setTimeout(r, 1000));
                     
-                    // Refuerzo: Presionamos Enter por si el click del botón no disparó el form
-                    await page.keyboard.press('Enter');
+                    // Clickeamos el botón de forma robusta
+                    await page.evaluate(() => {
+                        const b = Array.from(document.querySelectorAll('button, input[type="submit"], .ui-button'))
+                                      .find(el => (el.textContent || el.value || "").toLowerCase().includes('aceptar'));
+                        if (b) b.click();
+                    });
+
+                    await new Promise(r => setTimeout(r, 3000));
+                    console.log("📝 Verificando si el formulario de cédula cargó...");
                     
-                    console.log("⏳ Esperando formulario final...");
-                    await page.waitForSelector('input', { timeout: 15000 });
-                    console.log("📝 ¡Formulario de consulta ALCANZADO!");
+                    const final = await page.evaluate(() => !!document.querySelector('input[id*="cedula"], input[id*="documento"]'));
+                    if (final) {
+                        console.log("🚀 ¡EXITO! Formulario de cédula visible.");
+                    } else {
+                        await page.keyboard.press('Enter');
+                        console.log("⌨️ Reintento con Enter enviado.");
+                    }
                 } else {
-                    console.log("⚠️ Estructura no reconocida:", resultado);
+                    console.log("⚠️ No se encontraron elementos tras esperar:", resultado);
                 }
 
             } catch (err) {
