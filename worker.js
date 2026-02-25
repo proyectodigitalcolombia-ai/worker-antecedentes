@@ -6,7 +6,7 @@ import redis from 'redis';
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
-app.listen(PORT, '0.0.0.0', () => console.log(`✅ Health Check en puerto ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`✅ Servidor de salud en puerto ${PORT}`));
 
 puppeteer.use(StealthPlugin());
 const client = redis.createClient({ url: process.env.REDIS_URL });
@@ -24,84 +24,62 @@ async function procesar() {
             console.log(`🔎 Iniciando consulta para: ${cedula}`);
 
             const browser = await puppeteer.launch({
-                headless: false,
+                headless: "new", // Usamos el nuevo modo headless que es más indetectable
                 executablePath: '/usr/bin/google-chrome-stable',
-                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors'],
-                env: { DISPLAY: ':99' }
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-blink-features=AutomationControlled',
+                    '--lang=es-ES,es',
+                    '--ignore-certificate-errors'
+                ]
             });
 
             const page = await browser.newPage();
-            await page.setViewport({ width: 1366, height: 768 });
             
-            try {
-                await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+            // 1. Configuramos una identidad de Chrome REAL de Windows
+            await page.setExtraHTTPHeaders({ 'Accept-Language': 'es-ES,es;q=0.9' });
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
+            try {
                 console.log("👮 Navegando a puerto 7005...");
+                // Usamos una navegación más "paciente"
                 await page.goto('https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml', { 
-                    waitUntil: 'networkidle2', 
-                    timeout: 60000 
+                    waitUntil: 'load', 
+                    timeout: 90000 
                 });
 
-                // ESPERA CRÍTICA: Esperamos a que aparezca cualquier botón en la página
-                console.log("⏳ Esperando a que el formulario se renderice...");
-                try {
-                    await page.waitForSelector('button, .ui-button, input[type="submit"]', { timeout: 20000 });
-                } catch (e) {
-                    console.log("⚠️ Timeout esperando selectores, intentando búsqueda manual...");
-                }
-
-                await new Promise(r => setTimeout(r, 5000)); // Respiro extra para scripts
+                console.log("⏳ Esperando que PrimeFaces genere el formulario...");
+                // Esperamos específicamente a que el número de DIVs crezca (señal de carga de JS)
+                await page.waitForFunction(() => document.querySelectorAll('div').length > 50, { timeout: 30000 }).catch(() => {});
 
                 const resultado = await page.evaluate(() => {
-                    // Buscamos el checkbox por múltiples vías
-                    const check = document.querySelector('.ui-chkbox-box') || 
-                                  document.querySelector('div[id*="acepto"]') || 
-                                  document.querySelector('input[type="checkbox"]');
-                    
-                    // Buscamos el botón "Aceptar" por texto (insensible a mayúsculas)
-                    const botones = Array.from(document.querySelectorAll('button, input[type="submit"], .ui-button'));
-                    const btn = botones.find(b => {
-                        const txt = (b.textContent || b.value || "").toLowerCase();
-                        return txt.includes('aceptar');
-                    });
+                    // Buscamos el checkbox por la clase específica de PrimeFaces
+                    const check = document.querySelector('.ui-chkbox-box') || document.querySelector('div[id*="acepto"]');
+                    const btn = Array.from(document.querySelectorAll('.ui-button, button')).find(b => b.innerText.includes('Aceptar'));
 
                     if (check && btn) {
-                        check.scrollIntoView();
                         check.click();
-                        return { found: true, btnId: btn.id };
+                        return { found: true };
                     }
-                    
                     return { 
                         found: false, 
-                        totalDivs: document.querySelectorAll('div').length,
-                        totalButtons: botones.length,
-                        body: document.body.innerText.substring(0, 50)
+                        divs: document.querySelectorAll('div').length,
+                        html: document.body.innerHTML.includes('reCAPTCHA') ? 'BLOQUEO_CAPTCHA' : 'PAGINA_INCOMPLETA'
                     };
                 });
 
                 if (resultado.found) {
-                    console.log("⚖️ Checkbox marcado. Clickeando botón...");
+                    console.log("⚖️ Términos aceptados.");
                     await new Promise(r => setTimeout(r, 1000));
+                    await page.keyboard.press('Enter');
                     
-                    // Clickeamos el botón de forma robusta
-                    await page.evaluate(() => {
-                        const b = Array.from(document.querySelectorAll('button, input[type="submit"], .ui-button'))
-                                      .find(el => (el.textContent || el.value || "").toLowerCase().includes('aceptar'));
-                        if (b) b.click();
-                    });
-
-                    await new Promise(r => setTimeout(r, 3000));
-                    console.log("📝 Verificando si el formulario de cédula cargó...");
-                    
-                    const final = await page.evaluate(() => !!document.querySelector('input[id*="cedula"], input[id*="documento"]'));
-                    if (final) {
-                        console.log("🚀 ¡EXITO! Formulario de cédula visible.");
-                    } else {
-                        await page.keyboard.press('Enter');
-                        console.log("⌨️ Reintento con Enter enviado.");
-                    }
+                    await page.waitForSelector('input[id*="cedula"]', { timeout: 15000 });
+                    console.log("🚀 ¡Formulario de consulta ALCANZADO!");
                 } else {
-                    console.log("⚠️ No se encontraron elementos tras esperar:", resultado);
+                    console.log("⚠️ Estado de la página:", resultado);
+                    // Si falla, necesitamos saber si hay un captcha escondido
                 }
 
             } catch (err) {
