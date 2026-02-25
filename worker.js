@@ -3,13 +3,11 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import redis from 'redis';
 
-// --- SERVIDOR DE SALUD (Evita que Render mate el proceso) ---
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
-app.listen(PORT, '0.0.0.0', () => console.log(`✅ Servidor de salud en puerto ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`✅ Servidor de salud activo`));
 
-// --- CONFIGURACIÓN ---
 puppeteer.use(StealthPlugin());
 const client = redis.createClient({ url: process.env.REDIS_URL });
 
@@ -33,7 +31,7 @@ async function procesar() {
             });
 
             const page = await browser.newPage();
-            await page.setViewport({ width: 1280, height: 800 });
+            await page.setViewport({ width: 1280, height: 900 });
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
             try {
@@ -43,63 +41,69 @@ async function procesar() {
                     timeout: 60000 
                 });
 
-                // Espera inicial para que cargue PrimeFaces
                 await new Promise(r => setTimeout(r, 15000));
 
-                console.log("🎯 Buscando ubicación visual del checkbox...");
+                // 1. Localización ultra-precisa del checkbox
                 const coords = await page.evaluate(() => {
-                    const el = Array.from(document.querySelectorAll('td, label, span'))
-                                    .find(e => e.innerText.includes('Acepto') || e.innerText.includes('términos'));
-                    if (el) {
-                        const rect = el.getBoundingClientRect();
-                        return { x: rect.left - 20, y: rect.top + (rect.height / 2) };
+                    // Buscamos el div contenedor de PrimeFaces que tiene el check
+                    const box = document.querySelector('.ui-chkbox-box');
+                    if (box) {
+                        const rect = box.getBoundingClientRect();
+                        return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+                    }
+                    // Fallback al texto si la clase falla
+                    const label = Array.from(document.querySelectorAll('label, span')).find(e => e.innerText.includes('Acepto'));
+                    if (label) {
+                        const rect = label.getBoundingClientRect();
+                        return { x: rect.left - 15, y: rect.top + (rect.height / 2) };
                     }
                     return null;
                 });
 
-                if (coords && coords.x > 0) {
-                    console.log(`⚖️ Moviendo ratón y clickeando: X:${Math.round(coords.x)} Y:${Math.round(coords.y)}`);
+                if (coords) {
+                    console.log(`⚖️ Interactuando con Checkbox en: X:${Math.round(coords.x)} Y:${Math.round(coords.y)}`);
                     await page.mouse.move(coords.x, coords.y);
                     await new Promise(r => setTimeout(r, 500));
                     await page.mouse.click(coords.x, coords.y);
                     
-                    console.log("⏳ Sincronizando con el servidor (AJAX)...");
+                    console.log("⏳ Esperando respuesta de términos (AJAX)...");
                     await new Promise(r => setTimeout(r, 5000)); 
                 }
 
+                // 2. Envío del formulario con doble método
                 console.log("🚀 Ejecutando envío del formulario...");
                 await page.evaluate(() => {
-                    const btn = Array.from(document.querySelectorAll('button, .ui-button'))
-                                     .find(b => b.innerText.includes('Enviar'));
+                    const btn = document.querySelector('button[id*="continuar"]') || 
+                                document.querySelector('.ui-button') ||
+                                Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Enviar'));
                     if (btn) {
                         btn.scrollIntoView();
                         btn.click();
                     }
                 });
 
-                await new Promise(r => setTimeout(r, 7000));
+                await new Promise(r => setTimeout(r, 8000));
                 
-                // VALIDACIÓN FINAL DETALLADA
-                const validacion = await page.evaluate(() => {
-                    const input = document.querySelector('input[id*="cedula"]') || document.querySelector('input[type="text"]');
-                    const msgError = document.querySelector('.ui-messages-error-detail')?.innerText || "Ninguno";
+                // 3. Validación de cambio de página
+                const resultado = await page.evaluate(() => {
+                    const cedulaInput = document.querySelector('input[id*="documento"]') || document.querySelector('input[type="text"]');
                     return {
-                        exito: !!input && document.body.innerText.includes('Documento'),
-                        errorWeb: msgError
+                        exito: !!cedulaInput && document.body.innerText.includes('Documento'),
+                        textoBody: document.body.innerText.substring(0, 100)
                     };
                 });
 
-                if (validacion.exito) {
+                if (resultado.exito) {
                     console.log("📝 ¡FORMULARIO DE CÉDULA ALCANZADO!");
                 } else {
-                    console.log(`⚠️ No avanzó. Error en web: ${validacion.errorWeb}`);
-                    console.log("⌨️ Intento final: Tecla Enter");
+                    console.log(`⚠️ No hubo transición. Contenido: "${resultado.textoBody.replace(/\n/g, ' ')}..."`);
+                    console.log("⌨️ Reintento forzado con Enter...");
                     await page.keyboard.press('Enter');
                     await new Promise(r => setTimeout(r, 5000));
                 }
 
             } catch (err) {
-                console.error(`❌ Error en el flujo: ${err.message}`);
+                console.error(`❌ Error en el proceso: ${err.message}`);
             }
 
             await browser.close();
@@ -107,9 +111,8 @@ async function procesar() {
         }
     } catch (err) {
         console.error("❌ Error Crítico:", err);
-        setTimeout(procesar, 5000); // Reintento en caso de caída de Redis
+        setTimeout(procesar, 5000);
     }
 }
 
-// Iniciar el loop
 procesar();
