@@ -3,12 +3,13 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import redis from 'redis';
 
-// --- CONFIGURACIÓN ---
+// --- 1. SERVIDOR DE SALUD ---
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
-app.listen(PORT, '0.0.0.0', () => console.log(`✅ Health Check en puerto ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`✅ Servidor de salud en puerto ${PORT}`));
 
+// --- 2. CONFIGURACIÓN DE PUPPETEER ---
 puppeteer.use(StealthPlugin());
 const client = redis.createClient({ url: process.env.REDIS_URL });
 
@@ -39,6 +40,7 @@ async function procesar() {
                 env: { DISPLAY: ':99' }
             });
 
+            // AQUÍ SE DEFINE LA VARIABLE 'page'
             const page = await browser.newPage();
             
             try {
@@ -53,6 +55,7 @@ async function procesar() {
                 console.log("✅ Página cargada. Esperando renderizado...");
                 await new Promise(r => setTimeout(r, 10000));
 
+                // AHORA ESTO ESTÁ DENTRO DEL FLUJO CORRECTO
                 const resultado = await page.evaluate(() => {
                     const check = document.querySelector('input[type="checkbox"]');
                     const btn = document.querySelector('input[type="submit"]');
@@ -65,26 +68,28 @@ async function procesar() {
 
                 if (resultado.exito) {
                     console.log("⚖️ Marcando términos...");
-                    // Hacemos el click del botón fuera del evaluate para mayor control
                     await page.click('input[type="submit"]');
                     
-                    await page.waitForSelector('#cedulaInput', { timeout: 15000 });
-                    console.log("📝 ¡Formulario alcanzado!");
+                    // Esperamos a que cargue el siguiente paso
+                    await page.waitForSelector('input', { timeout: 15000 });
+                    console.log("📝 ¡Formulario de consulta alcanzado!");
                 } else {
-                    console.log("⚠️ Elementos no encontrados:", resultado);
+                    console.log("⚠️ Elementos no encontrados en el DOM:", resultado);
                 }
 
             } catch (err) {
-                console.error(`❌ Error en el flujo: ${err.message}`);
+                console.error(`❌ Error en el flujo de la página: ${err.message}`);
             }
 
             await browser.close();
             console.log("🏁 Sesión finalizada.");
         }
     } catch (err) {
-        console.error("❌ Error Crítico:", err);
+        console.error("❌ Error Crítico en Worker:", err);
+        // Reintento si falla la conexión a Redis
         setTimeout(procesar, 5000);
     }
 }
 
+// Arrancamos el proceso
 procesar();
