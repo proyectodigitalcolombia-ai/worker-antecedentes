@@ -6,10 +6,10 @@ const axios = require('axios');
 
 puppeteer.use(StealthPlugin());
 
-// --- SERVIDOR PARA RENDER (Mantiene el servicio "Live") ---
+// --- SERVIDOR PARA RENDER ---
 const app = express();
 const PORT = process.env.PORT || 10000;
-app.get('/', (req, res) => res.status(200).send('Worker Operativo 🟢'));
+app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
 app.listen(PORT, '0.0.0.0', () => console.log(`✅ Servidor en puerto ${PORT}`));
 
 // --- CONFIGURACIÓN REDIS ---
@@ -19,8 +19,6 @@ async function resolverCaptcha(page) {
     try {
         console.log("🧩 Detectando Captcha...");
         const sitekey = await page.$eval('.g-recaptcha', el => el.getAttribute('data-sitekey'));
-        
-        console.log("📨 Enviando a 2Captcha...");
         const resp = await axios.get(`http://2captcha.com/in.php?key=${process.env.API_KEY_2CAPTCHA}&method=userrecaptcha&googlekey=${sitekey}&pageurl=${page.url()}&json=1`);
         const requestId = resp.data.request;
 
@@ -31,7 +29,7 @@ async function resolverCaptcha(page) {
             console.log("⏳ Esperando solución del captcha...");
         }
     } catch (e) {
-        console.error("❌ Error en captcha:", e.message);
+        console.error("❌ Error en Captcha:", e.message);
         return null;
     }
 }
@@ -39,12 +37,12 @@ async function resolverCaptcha(page) {
 async function procesar() {
     try {
         if (!client.isOpen) await client.connect();
-        console.log("📡 Worker iniciado. Esperando tareas...");
+        console.log("📡 Worker esperando tareas...");
 
         while (true) {
             const tareaRaw = await client.brPop('cola_consultas', 0);
             if (!tareaRaw) continue;
-            
+
             const { cedula } = JSON.parse(tareaRaw.element);
             console.log(`🔎 Consultando cédula: ${cedula}`);
 
@@ -62,39 +60,36 @@ async function procesar() {
 
             const page = await browser.newPage();
             
-            // Autenticación con el usuario rotativo
             await page.authenticate({
                 username: 'lzwsgumc-rotate',
                 password: 'satazom7w0zq'
             });
 
             try {
-                // 1. Verificación de IP
-                console.log("🌐 Verificando IP del Proxy...");
+                // 1. Validar Proxy
+                console.log("🌐 Verificando Proxy...");
                 await page.goto('http://ipv4.webshare.io/', { waitUntil: 'networkidle2', timeout: 30000 });
                 const ipActual = await page.$eval('body', el => el.innerText);
-                console.log(`✅ IP Proxy Activa: ${ipActual.trim()}`);
+                console.log(`✅ IP Proxy: ${ipActual.trim()}`);
 
-                // 2. Navegación a la Policía (URL Estándar)
-                console.log("👮 Navegando a Policía Nacional...");
+                // 2. Navegar a la Policía (URL ESTÁNDAR SIN 7005)
+                console.log("👮 Navegando a la Policía Nacional...");
                 await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
                 
-                // Usamos la URL sin puerto 7005 para evitar errores de túnel
                 await page.goto('https://antecedentes.policia.gov.co/WebJudicial/antecedentes.xhtml', { 
                     waitUntil: 'networkidle2', 
                     timeout: 60000 
                 });
 
                 // 3. Aceptar términos y condiciones
-                console.log("⚖️ Buscando términos y condiciones...");
-                await page.waitForSelector('#aceptoTerminos', { timeout: 15000 });
+                console.log("⚖️ Buscando términos...");
+                await page.waitForSelector('#aceptoTerminos', { timeout: 20000 });
                 await page.click('#aceptoTerminos');
                 await page.click('input[type="submit"]');
                 console.log("✅ Términos aceptados.");
 
-                // 4. Llenar el formulario
-                console.log("📝 Ingresando datos de la cédula...");
-                await page.waitForSelector('#cedulaInput', { timeout: 15000 });
+                // 4. Formulario
+                await page.waitForSelector('#cedulaInput', { timeout: 20000 });
                 await page.type('#cedulaInput', cedula);
 
                 const token = await resolverCaptcha(page);
@@ -102,24 +97,23 @@ async function procesar() {
                     await page.evaluate((t) => {
                         document.getElementById('g-recaptcha-response').innerHTML = t;
                     }, token);
-                    
                     await page.click('#btnConsultar');
-                    console.log("🖱️ Consulta enviada. Esperando respuesta...");
                     
+                    console.log("🖱️ Consulta enviada...");
                     await page.waitForSelector('#panelResultado', { timeout: 30000 });
-                    const resultado = await page.$eval('#panelResultado', el => el.innerText);
-                    console.log(`📊 RESULTADO FINAL: ${resultado}`);
+                    const res = await page.$eval('#panelResultado', el => el.innerText);
+                    console.log(`📊 RESULTADO: ${res}`);
                 }
 
             } catch (err) {
-                console.error(`❌ Error en el proceso: ${err.message}`);
+                console.error(`❌ Error en proceso: ${err.message}`);
             }
 
             await browser.close();
-            console.log(`🏁 Sesión cerrada para: ${cedula}`);
+            console.log("🏁 Sesión cerrada.");
         }
     } catch (err) {
-        console.error("❌ Error crítico:", err);
+        console.error("❌ Error Crítico:", err);
         setTimeout(procesar, 5000);
     }
 }
