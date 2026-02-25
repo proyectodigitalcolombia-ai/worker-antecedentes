@@ -6,7 +6,7 @@ import redis from 'redis';
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
-app.listen(PORT, '0.0.0.0', () => console.log(`✅ Servidor de salud en puerto ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`✅ Health Check en puerto ${PORT}`));
 
 puppeteer.use(StealthPlugin());
 const client = redis.createClient({ url: process.env.REDIS_URL });
@@ -26,19 +26,12 @@ async function procesar() {
             const browser = await puppeteer.launch({
                 headless: false,
                 executablePath: '/usr/bin/google-chrome-stable',
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-blink-features=AutomationControlled',
-                    '--ignore-certificate-errors',
-                    '--ignore-ssl-errors'
-                ],
+                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors'],
                 env: { DISPLAY: ':99' }
             });
 
             const page = await browser.newPage();
-            await page.setViewport({ width: 1280, height: 800 });
+            await page.setViewport({ width: 1366, height: 768 });
             
             try {
                 await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
@@ -52,43 +45,39 @@ async function procesar() {
                 await new Promise(r => setTimeout(r, 12000));
 
                 const resultado = await page.evaluate(() => {
-                    // Buscamos el checkbox por ID parcial o clase de PrimeFaces
-                    const check = document.querySelector('[id*="acepto"]') || 
-                                  document.querySelector('.ui-chkbox-box') ||
-                                  document.querySelector('input[type="checkbox"]');
+                    // 1. Buscamos cualquier cosa que parezca un checkbox de PrimeFaces
+                    const possibleChecks = document.querySelectorAll('.ui-chkbox-box, .ui-chkbox, div[class*="chkbox"]');
+                    const check = possibleChecks[0];
                     
-                    // Buscamos el botón que diga "Aceptar" o "Enviar"
-                    const botones = Array.from(document.querySelectorAll('button, input[type="submit"]'));
-                    const btn = botones.find(b => 
-                        b.innerText.includes('Aceptar') || 
-                        b.value?.includes('Aceptar') || 
-                        b.id?.includes('continuar')
-                    );
+                    // 2. Buscamos cualquier botón que diga "Aceptar"
+                    const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], .ui-button'));
+                    const btn = buttons.find(b => b.textContent.includes('Aceptar') || (b.value && b.value.includes('Aceptar')));
 
                     if (check && btn) {
-                        check.scrollIntoView();
-                        check.click(); // Click vía JS
-                        return { found: true, btnId: btn.id, checkId: check.id };
+                        check.click();
+                        return { found: true, msg: "Elementos encontrados y clicados" };
                     }
-                    return { found: false, totalButtons: botones.length };
+                    
+                    return { 
+                        found: false, 
+                        totalDivs: document.querySelectorAll('div').length,
+                        iframes: document.querySelectorAll('iframe').length,
+                        textSnippet: document.body.innerText.substring(0, 100)
+                    };
                 });
 
                 if (resultado.found) {
-                    console.log("⚖️ Elementos encontrados. Intentando click físico...");
-                    await new Promise(r => setTimeout(r, 1000));
+                    console.log("⚖️ Checkbox y Botón accionados.");
+                    await new Promise(r => setTimeout(r, 2000));
                     
-                    // Como respaldo, presionamos la tecla Tab y Espacio para marcar el check si el click falló
-                    await page.keyboard.press('Tab');
-                    await page.keyboard.press('Space');
-                    await new Promise(r => setTimeout(r, 500));
-                    await page.keyboard.press('Enter'); 
-
-                    console.log("⏳ Esperando transición al formulario...");
-                    // Esperamos que aparezca el campo de texto de la cédula
-                    await page.waitForSelector('input[type="text"]', { timeout: 15000 });
+                    // Refuerzo: Presionamos Enter por si el click del botón no disparó el form
+                    await page.keyboard.press('Enter');
+                    
+                    console.log("⏳ Esperando formulario final...");
+                    await page.waitForSelector('input', { timeout: 15000 });
                     console.log("📝 ¡Formulario de consulta ALCANZADO!");
                 } else {
-                    console.log("⚠️ No se hallaron los botones. Revisando estructura...");
+                    console.log("⚠️ Estructura no reconocida:", resultado);
                 }
 
             } catch (err) {
