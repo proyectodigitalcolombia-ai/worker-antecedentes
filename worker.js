@@ -6,7 +6,7 @@ const axios = require('axios');
 
 puppeteer.use(StealthPlugin());
 
-// --- SERVIDOR PARA RENDER (Mantiene el servicio "Live") ---
+// --- SERVIDOR DE SALUD PARA RENDER ---
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.status(200).send('Worker Antecedentes Operativo 🟢'));
@@ -29,6 +29,7 @@ async function resolverCaptcha(page) {
             console.log("⏳ Esperando solución del captcha...");
         }
     } catch (e) {
+        console.error("❌ Error en Captcha:", e.message);
         return null;
     }
 }
@@ -36,7 +37,7 @@ async function resolverCaptcha(page) {
 async function procesar() {
     try {
         if (!client.isOpen) await client.connect();
-        console.log("📡 Worker esperando tareas...");
+        console.log("📡 Worker iniciado. Esperando tareas en Redis...");
 
         while (true) {
             const tareaRaw = await client.brPop('cola_consultas', 0);
@@ -49,29 +50,30 @@ async function procesar() {
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
                     '--disable-http2',
-                    // Configuración basada en tus imágenes de Webshare
+                    // Basado en tus capturas de Webshare:
                     '--proxy-server=http://p.webshare.io:80'
                 ]
             });
 
             const page = await browser.newPage();
             
-            // Credenciales de tu panel image_b4df03.png
+            // Credenciales exactas de tu imagen
             await page.authenticate({
                 username: 'lzwsgumc-rotate',
                 password: 'satazom7w0zq'
             });
 
             try {
-                // 1. Validar que el Proxy funciona
-                console.log("🌐 Verificando Proxy...");
-                await page.goto('http://ipv4.webshare.io/', { timeout: 20000 });
+                // 1. Validar Conexión (Prueba de IP)
+                console.log("🌐 Verificando IP del Proxy...");
+                await page.goto('http://ipv4.webshare.io/', { waitUntil: 'networkidle2', timeout: 30000 });
                 const ipActual = await page.$eval('body', el => el.innerText);
-                console.log(`✅ IP Proxy Activa: ${ipActual.trim()}`);
+                console.log(`✅ Conectado con IP: ${ipActual.trim()}`);
 
-                // 2. Navegar a la Policía (URL con puerto 7005)
-                console.log("👮 Navegando a Policía Nacional (Puerto 7005)...");
+                // 2. Navegar a la Policía
+                console.log("👮 Entrando a la Policía (Puerto 7005)...");
                 await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
                 
                 await page.goto('https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml', { 
@@ -79,44 +81,23 @@ async function procesar() {
                     timeout: 60000 
                 });
 
-                // 3. Aceptar términos si aparecen
-                const checkTerminos = await page.$('#aceptoTerminos');
-                if (checkTerminos) {
+                // 3. Manejo de Términos y Condiciones
+                const btnAcepto = await page.$('#aceptoTerminos');
+                if (btnAcepto) {
                     console.log("⚖️ Aceptando términos...");
                     await page.click('#aceptoTerminos');
+                    // El botón Continuar suele ser el input submit principal
                     await page.click('input[type="submit"]');
                     await page.waitForNavigation({ waitUntil: 'networkidle2' });
                 }
 
                 // 4. Llenar Formulario
                 console.log("📝 Ingresando datos...");
-                await page.waitForSelector('#cedulaInput', { timeout: 15000 });
+                await page.waitForSelector('#cedulaInput', { timeout: 20000 });
                 await page.type('#cedulaInput', cedula);
 
-                const token = await resolverCaptcha(page);
-                if (token) {
+                const captchaToken = await resolverCaptcha(page);
+                if (captchaToken) {
                     await page.evaluate((t) => {
                         document.getElementById('g-recaptcha-response').innerHTML = t;
-                    }, token);
-                    
-                    await page.click('#btnConsultar');
-                    console.log("🖱️ Consulta enviada.");
-                    
-                    await page.waitForSelector('#panelResultado', { timeout: 30000 });
-                    const res = await page.$eval('#panelResultado', el => el.innerText);
-                    console.log(`📊 RESULTADO: ${res}`);
-                }
-
-            } catch (err) {
-                console.error(`❌ Error en el proceso: ${err.message}`);
-            }
-
-            await browser.close();
-        }
-    } catch (err) {
-        console.error("❌ Error Crítico:", err);
-        setTimeout(procesar, 5000);
-    }
-}
-
-procesar();
+                    }, captchaToken);
