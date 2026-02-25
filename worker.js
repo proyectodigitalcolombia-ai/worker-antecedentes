@@ -21,7 +21,7 @@ async function procesar() {
             if (!tareaRaw) continue;
 
             const { cedula } = JSON.parse(tareaRaw.element);
-            console.log(`🔎 Iniciando consulta para: ${cedula}`);
+            console.log(`🔎 Iniciando consulta para: 1050974347`);
 
             const browser = await puppeteer.launch({
                 headless: "new",
@@ -40,41 +40,43 @@ async function procesar() {
                     timeout: 60000 
                 });
 
-                // Espera para carga de PrimeFaces
+                // Esperamos un tiempo prudente para que cargue el JS de PrimeFaces
                 await new Promise(r => setTimeout(r, 12000));
 
                 const resultado = await page.evaluate(() => {
-                    // 1. Buscamos el checkbox (usando selectores más amplios por si es PrimeFaces)
-                    const check = document.querySelector('.ui-chkbox-box') || 
-                                  document.querySelector('div[id*="acepto"]') ||
-                                  document.querySelector('input[type="checkbox"]');
+                    // Buscamos el checkbox por su clase de icono (el check verde/azul de PrimeFaces)
+                    const checkIcon = document.querySelector('.ui-chkbox-icon') || 
+                                     document.querySelector('.ui-chkbox-box') ||
+                                     document.querySelector('div[id*="acepto"]');
                     
-                    // 2. Buscamos el botón "Enviar" (que es el que vimos en el log)
-                    const botones = Array.from(document.querySelectorAll('button, input[type="submit"], .ui-button'));
-                    const btn = botones.find(b => {
-                        const t = b.innerText || b.value || "";
-                        return t.toLowerCase().includes('enviar') || t.toLowerCase().includes('aceptar');
-                    });
+                    // Buscamos el botón 'Enviar' que ya confirmamos que existe
+                    const botones = Array.from(document.querySelectorAll('button, .ui-button'));
+                    const btnEnviar = botones.find(b => b.innerText.includes('Enviar'));
 
-                    if (check && btn) {
-                        check.click();
-                        return { found: true, btnText: btn.innerText.trim() };
+                    if (btnEnviar) {
+                        // Si encontramos el check, lo clickeamos
+                        if (checkIcon) checkIcon.click();
+                        
+                        // Clickeamos el botón Enviar pase lo que pase
+                        btnEnviar.click();
+                        return { exito: true, teniaCheck: !!checkIcon };
                     }
-                    return { found: false, btns: botones.map(b => b.innerText.trim()) };
+                    return { exito: false, btns: botones.map(b => b.innerText.trim()) };
                 });
 
-                if (resultado.found) {
-                    console.log(`⚖️ Checkbox marcado. Clickeando botón: [${resultado.btnText}]`);
-                    await new Promise(r => setTimeout(r, 1000));
+                if (resultado.exito) {
+                    console.log(`⚖️ Click enviado (Check detectado: ${resultado.teniaCheck}).`);
+                    await new Promise(r => setTimeout(r, 2000));
                     
-                    // Intentamos click y luego Enter como refuerzo
-                    await page.keyboard.press('Enter'); 
+                    // Refuerzo por teclado
+                    await page.keyboard.press('Enter');
                     
-                    console.log("⏳ Esperando formulario de cédula...");
-                    await page.waitForSelector('input', { timeout: 15000 });
+                    console.log("⏳ Verificando transición...");
+                    // Esperamos el input donde se escribe la cédula
+                    await page.waitForSelector('input[type="text"]', { timeout: 10000 });
                     console.log("🚀 ¡EXITO! Formulario de consulta ALCANZADO.");
                 } else {
-                    console.log("⚠️ No se logró la combinación. Botones vistos:", resultado.btns);
+                    console.log("⚠️ No se encontró el botón Enviar. Botones actuales:", resultado.btns);
                 }
 
             } catch (err) {
