@@ -1,15 +1,20 @@
 {
   "name": "worker-antecedentes",
   "version": "1.0.0",
+  "description": "Worker que procesa consultas con Puppeteer y resuelve captchas",
   "main": "worker.js",
   "scripts": {
     "start": "node worker.js"
   },
   "dependencies": {
+    "axios": "^1.6.7",
     "express": "^4.18.2",
     "puppeteer": "^21.11.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "redis": "^4.6.10"
+  },
+  "engines": {
+    "node": "20.x"
   }
 }
