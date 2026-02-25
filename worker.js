@@ -6,7 +6,7 @@ import redis from 'redis';
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
-app.listen(PORT, '0.0.0.0', () => console.log(`✅ Worker en línea`));
+app.listen(PORT, '0.0.0.0', () => console.log(`✅ Health Check en puerto ${PORT}`));
 
 puppeteer.use(StealthPlugin());
 const client = redis.createClient({ url: process.env.REDIS_URL });
@@ -26,72 +26,69 @@ async function procesar() {
             const browser = await puppeteer.launch({
                 headless: "new",
                 executablePath: '/usr/bin/google-chrome-stable',
-                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors'],
-                env: { DISPLAY: ':99' }
+                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors']
             });
 
             const page = await browser.newPage();
-            await page.setViewport({ width: 1280, height: 900 });
-            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-
+            await page.setViewport({ width: 1280, height: 800 });
+            
             try {
                 console.log("👮 Navegando a puerto 7005...");
                 await page.goto('https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml', { 
-                    waitUntil: 'load', 
+                    waitUntil: 'networkidle2', 
                     timeout: 60000 
                 });
 
-                // 1. Espera de estabilización
-                await new Promise(r => setTimeout(r, 15000));
+                // 1. Simular lectura (Humano)
+                console.log("📜 Simulando lectura de términos...");
+                await page.mouse.wheel({ deltaY: 500 });
+                await new Promise(r => setTimeout(r, 8000));
 
-                console.log("🛠️ Inyectando aceptación mediante script de PrimeFaces...");
+                // 2. Click en el checkbox usando su clase de PrimeFaces
+                console.log("⚖️ Marcando checkbox...");
                 await page.evaluate(() => {
-                    // Marcamos el checkbox internamente
-                    const chk = document.querySelector('.ui-chkbox-box');
+                    const chk = document.querySelector('.ui-chkbox-box') || document.querySelector('div[id*="acepto"]');
                     if (chk) chk.click();
-                    
-                    // Buscamos el botón y forzamos su ejecución
-                    const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Enviar'));
+                });
+
+                // ESPERA CRÍTICA: Esperamos a que el ViewState de PrimeFaces se actualice
+                await new Promise(r => setTimeout(r, 5000));
+
+                // 3. Click en ENVIAR
+                console.log("🚀 Enviando formulario...");
+                const clickExitoso = await page.evaluate(() => {
+                    const btn = Array.from(document.querySelectorAll('button, .ui-button'))
+                                     .find(b => b.innerText.includes('Enviar') || b.innerText.includes('Aceptar'));
                     if (btn) {
-                        btn.removeAttribute('disabled');
-                        // Disparamos el evento de PrimeFaces directamente
-                        if (typeof PrimeFaces !== 'undefined') {
-                            const formId = btn.closest('form').id;
-                            PrimeFaces.ab({s: btn.id, f: formId, u: '@all'});
-                        } else {
-                            btn.click();
-                        }
+                        btn.click();
+                        return true;
                     }
+                    return false;
                 });
 
-                // Espera larga para la transición de red
-                console.log("⏳ Esperando respuesta del servidor de la Policía...");
-                await new Promise(r => setTimeout(r, 10000));
-                
-                // 2. Verificación agresiva
-                const resultado = await page.evaluate(() => {
-                    const found = !!document.querySelector('input[id*="cedula"]') || 
-                                  !!document.querySelector('input[id*="documento"]') ||
-                                  document.body.innerText.includes('Cédula');
-                    return {
-                        exito: found,
-                        url: window.location.href,
-                        preview: document.body.innerText.substring(0, 100).replace(/\n/g, ' ')
-                    };
-                });
+                if (clickExitoso) {
+                    await new Promise(r => setTimeout(r, 10000)); // La transición al formulario es lenta
+                    
+                    const resultado = await page.evaluate(() => {
+                        const input = document.querySelector('input[id*="cedula"]') || document.querySelector('input[type="text"]');
+                        return {
+                            paso: !!input,
+                            txt: document.body.innerText.substring(0, 50).replace(/\n/g, ' ')
+                        };
+                    });
 
-                if (resultado.exito) {
-                    console.log("🚀 ¡ÉXITO! Formulario de consulta alcanzado.");
-                } else {
-                    console.log(`⚠️ Fallo en transición. URL actual: ${resultado.url}`);
-                    console.log(`📝 Contenido: "${resultado.preview}..."`);
-                    console.log("⌨️ Reintento final: Enter");
-                    await page.keyboard.press('Enter');
-                    await new Promise(r => setTimeout(r, 5000));
+                    if (resultado.paso) {
+                        console.log("🚀 ¡EXITO! Formulario de cédula cargado.");
+                    } else {
+                        console.log(`⚠️ No hubo cambio. Pantalla dice: "${resultado.txt}"`);
+                        console.log("⌨️ Reintento con Enter...");
+                        await page.keyboard.press('Enter');
+                        await new Promise(r => setTimeout(r, 5000));
+                    }
                 }
 
             } catch (err) {
-                console.error(`❌ Error en flujo: ${err.message}`);
+                console.error(`❌ Error: ${err.message}`);
             }
 
             await browser.close();
