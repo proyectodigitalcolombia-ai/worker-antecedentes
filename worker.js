@@ -2,128 +2,113 @@ const express = require('express');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const redis = require('redis');
+const Tesseract = require('tesseract.js'); // Para resolver el captcha
 
-// --- 1. CONFIGURACIÓN DEL SERVIDOR DE SALUD (Health Check) ---
-// Se coloca al inicio para que Render detecte el servicio "Verde" de inmediato
+// --- 1. SERVIDOR DE SALUD (Health Check) ---
 const app = express();
 const PORT = process.env.PORT || 10000;
+app.get('/', (req, res) => res.status(200).send('Worker Pro Operativo 🟢'));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Health Check en puerto ${PORT}`));
 
-app.get('/', (req, res) => {
-    res.status(200).send('Worker Antedecentes Operativo 🟢');
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Servidor de salud escuchando en el puerto ${PORT}`);
-});
-
-// --- 2. CONFIGURACIÓN DE PLUGINS Y REDIS ---
+// --- 2. CONFIGURACIÓN ---
 puppeteer.use(StealthPlugin());
 const client = redis.createClient({ url: process.env.REDIS_URL });
 
 async function procesar() {
     try {
-        console.log("📡 Conectando a Redis...");
         if (!client.isOpen) await client.connect();
-        console.log("✅ Conectado. Esperando tareas en la cola...");
+        console.log("✅ Conectado a Redis. Esperando tareas...");
 
         while (true) {
             const tareaRaw = await client.brPop('cola_consultas', 0);
             if (!tareaRaw) continue;
 
             const { cedula } = JSON.parse(tareaRaw.element);
-            console.log(`🔎 Iniciando consulta para la cédula: ${cedula}`);
+            console.log(`🔎 Iniciando proceso para: ${cedula}`);
 
             const browser = await puppeteer.launch({
-                headless: false, // Requerido para Xvfb (simula pantalla real)
+                headless: false, // Requerido para Xvfb
                 executablePath: '/usr/bin/google-chrome',
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-blink-features=AutomationControlled',
-                    '--start-maximized',
                     '--proxy-server=http://p.webshare.io:80',
-                    // Solución al ERR_SSL_PROTOCOL_ERROR
                     '--ignore-certificate-errors',
                     '--ignore-ssl-errors',
-                    '--disable-web-security'
-                ]
+                    '--window-size=1920,1080'
+                ],
+                env: {
+                    DISPLAY: ':99' // Vincula Puppeteer con la pantalla virtual de Render
+                }
             });
 
             const page = await browser.newPage();
             await page.setViewport({ width: 1920, height: 1080 });
-
-            // Autenticación del Proxy (IP Colombia)
-            await page.authenticate({
-                username: 'lzwsgumc-200',
-                password: 'satazom7w0zq'
-            });
+            await page.authenticate({ username: 'lzwsgumc-200', password: 'satazom7w0zq' });
 
             try {
-                // User-Agent real de Windows para evitar bloqueos
                 await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
-                console.log("👮 Navegando al portal de la Policía...");
-                
-                // Usamos una navegación más flexible para evitar errores de red
+                console.log("👮 Navegando a la Policía...");
                 await page.goto('https://antecedentes.policia.gov.co/WebJudicial/antecedentes.xhtml', { 
                     waitUntil: 'load', 
                     timeout: 60000 
                 });
 
-                // Pausa táctica de 8 segundos para que el portal cargue sus scripts de seguridad
-                console.log("⏳ Esperando renderizado de la página...");
                 await new Promise(r => setTimeout(r, 8000));
 
-                console.log("⚖️ Intentando aceptar términos y condiciones...");
-                
-                // Inyección de JavaScript para forzar el clic y el evento de activación
-                const operacionExitosa = await page.evaluate(() => {
-                    const check = document.querySelector('#aceptoTerminos');
+                // --- PASO 1: ACEPTAR TÉRMINOS ---
+                console.log("⚖️ Aceptando términos...");
+                const clickTerms = await page.evaluate(() => {
+                    const chk = document.querySelector('#aceptoTerminos');
                     const btn = document.querySelector('input[type="submit"]');
-                    
-                    if (check && btn) {
-                        check.click();
-                        // Disparamos evento nativo por si la página tiene validadores de estado
-                        check.dispatchEvent(new Event('change', { bubbles: true }));
-                        
-                        // Pequeño delay antes de dar clic al botón de enviar
-                        setTimeout(() => btn.click(), 1500);
+                    if (chk && btn) {
+                        chk.click();
+                        setTimeout(() => btn.click(), 1000);
                         return true;
                     }
                     return false;
                 });
 
-                if (operacionExitosa) {
-                    console.log("✅ Términos aceptados. Esperando carga del formulario...");
-                    
-                    // Esperamos a que aparezca el input de la cédula
+                if (clickTerms) {
+                    // --- PASO 2: RESOLVER CAPTCHA ---
+                    console.log("🧩 Esperando formulario de consulta...");
                     await page.waitForSelector('#cedulaInput', { timeout: 20000 });
-                    console.log("📝 ¡Formulario listo para ingresar datos!");
                     
-                    // --- AQUÍ CONTINÚA TU LÓGICA DE CAPTCHA Y ENVÍO ---
-                    
+                    // Capturamos el elemento del captcha (ajustar selector según el portal)
+                    const captchaElement = await page.$('img[id*="captcha"]'); 
+                    if (captchaElement) {
+                        await captchaElement.screenshot({ path: 'captcha.png' });
+                        console.log("📸 Captcha guardado. Procesando OCR...");
+                        
+                        const { data: { text } } = await Tesseract.recognize('captcha.png', 'eng');
+                        const codigoLimpio = text.trim().toUpperCase();
+                        console.log(`📝 Texto detectado: ${codigoLimpio}`);
+
+                        // Llenar campos
+                        await page.type('#cedulaInput', cedula);
+                        await page.type('input[id*="captchaInput"]', codigoLimpio); // Ajustar selector
+                        
+                        console.log("🚀 Enviando consulta...");
+                        // await page.click('#btnConsultar'); // Descomentar cuando tengas el ID real
+                    }
                 } else {
-                    const title = await page.title();
-                    console.error(`❌ El botón no fue encontrado. Título de la página actual: "${title}"`);
+                    console.error("❌ No se encontró el botón de términos.");
                 }
 
             } catch (err) {
-                console.error(`❌ Error durante la navegación: ${err.message}`);
-                // Captura del título para diagnóstico en caso de error SSL persistente
-                const errorTitle = await page.title();
-                console.log(`📍 Título en el momento del fallo: ${errorTitle}`);
+                console.error(`❌ Error en flujo: ${err.message}`);
             }
 
-            console.log("🏁 Cerrando navegador...");
             await browser.close();
+            console.log("🏁 Ciclo completado.");
         }
-    } catch (error) {
-        console.error("❌ Error Crítico en el Worker:", error);
-        // Si Redis se desconecta, reintentamos en 5 segundos
+    } catch (err) {
+        console.error("❌ Error Crítico:", err);
         setTimeout(procesar, 5000);
     }
 }
 
-// Iniciar el flujo
 procesar();
