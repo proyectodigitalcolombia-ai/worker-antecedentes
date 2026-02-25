@@ -1,18 +1,21 @@
-# Usamos la imagen oficial de Puppeteer que ya trae Chrome
+# Usamos una versión específica y más ligera
 FROM ghcr.io/puppeteer/puppeteer:21.11.0
 
 USER root
+
+# Evitamos que Puppeteer intente descargar Chrome otra vez (ya viene en la imagen)
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
+
 WORKDIR /app
 
-# Copiamos dependencias
 COPY package*.json ./
-RUN npm install
 
-# Copiamos el resto del código
+# Instalación limpia
+RUN npm install --omit=dev
+
 COPY . .
 
-# Exponemos el puerto para el Health Check de Render
 EXPOSE 10000
 
-# Comando de arranque
 CMD ["node", "worker.js"]
