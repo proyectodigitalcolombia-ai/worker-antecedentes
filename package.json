@@ -1,7 +1,7 @@
 {
   "name": "worker-antecedentes",
   "version": "1.0.0",
-  "description": "Worker que procesa consultas con Puppeteer y resuelve captchas",
+  "description": "Worker con Puppeteer y Axios para 2Captcha",
   "main": "worker.js",
   "scripts": {
     "start": "node worker.js"
