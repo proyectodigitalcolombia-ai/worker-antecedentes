@@ -1,12 +1,15 @@
 FROM node:20-bookworm
 
-# 1. Instalamos dependencias incluyendo xauth y xvfb
+# 1. Instalamos TODO lo necesario para X11
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     gnupg \
     ca-certificates \
     xvfb \
     xauth \
+    x11-xkb-utils \
+    x11-utils \
+    dbus-x11 \
     # Dependencias de librerías para Chrome
     libnss3 \
     libatk-bridge2.0-0 \
@@ -40,5 +43,5 @@ COPY . .
 
 EXPOSE 10000
 
-# Usamos el flag -a para que xvfb-run maneje xauth automáticamente
-CMD ["xvfb-run", "-a", "--server-args=-screen 0 1920x1080x24", "node", "worker.js"]
+# Script de arranque que limpia bloqueos previos de Xvfb
+CMD rm -f /tmp/.X99-lock && xvfb-run -a -e /dev/stdout --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" node worker.js
