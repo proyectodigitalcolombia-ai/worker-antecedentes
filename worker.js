@@ -5,66 +5,63 @@ const express = require('express');
 
 puppeteer.use(StealthPlugin());
 
-// --- 1. SERVIDOR DE SALUD (Para que Render no marque "Failed") ---
+// --- SERVIDOR DE SALUD ---
 const app = express();
+app.get('/', (req, res) => res.status(200).send('Worker Operando con Puppeteer 🕵️‍♂️'));
 const PORT = process.env.PORT || 10000;
+app.listen(PORT, '0.0.0.0');
 
-app.get('/', (req, res) => res.status(200).send('Worker Activo 🤖'));
-
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Health check escuchando en puerto ${PORT}`);
-});
-
-// --- 2. CONEXIÓN A REDIS ---
+// --- CONFIGURACIÓN REDIS ---
 const client = redis.createClient({ url: process.env.REDIS_URL });
-
-client.on('error', (err) => console.log('❌ Error en Redis:', err));
 
 async function procesarConsultas() {
     try {
         await client.connect();
-        console.log("✅ Conectado a Redis. Esperando tareas en 'cola_consultas'...");
+        console.log("🚀 Worker escuchando la cola de la Policía...");
 
         while (true) {
-            // BRPOP espera hasta que llegue una tarea
             const tareaRaw = await client.brPop('cola_consultas', 0);
             const { cedula } = JSON.parse(tareaRaw.element);
-            
-            console.log(`🔎 Iniciando consulta para: ${cedula}`);
+            console.log(`🔎 Consultando antecedentes para: ${cedula}`);
 
             const browser = await puppeteer.launch({
                 headless: "new",
-                executablePath: '/usr/bin/google-chrome', // Ruta de la imagen Docker
+                executablePath: '/usr/bin/google-chrome',
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
                     `--proxy-server=http://${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`
                 ]
             });
 
             const page = await browser.newPage();
-
-            // Autenticación del Proxy residencial
+            
+            // 1. Autenticar Proxy
             await page.authenticate({
                 username: process.env.PROXY_USER,
                 password: process.env.PROXY_PASS
             });
 
             try {
-                // AQUÍ VA LA LÓGICA DE NAVEGACIÓN (Prueba con Google primero)
-                await page.goto('https://www.google.com', { waitUntil: 'networkidle2' });
-                console.log(`✅ Navegación exitosa para la cédula ${cedula}`);
+                // 2. Ir a la página de la Policía
+                await page.goto('https://srvandroid.policia.gov.co/Antecedentes/', { waitUntil: 'networkidle2' });
+                
+                // 3. Lógica para aceptar términos y meter la cédula
+                // (Aquí es donde usaremos tu llave de 2Captcha si hay captcha)
+                console.log(`✅ Página cargada para ${cedula}. Procesando formulario...`);
+                
+                // Aquí podrías añadir un pantallazo para debug:
+                // await page.screenshot({ path: 'resultado.png' });
+
             } catch (navError) {
-                console.error(`❌ Error navegando para ${cedula}:`, navError.message);
+                console.error(`❌ Error en navegación: ${navError.message}`);
             }
 
             await browser.close();
-            console.log(`🏁 Tarea finalizada.`);
+            console.log(`🏁 Finalizado proceso de ${cedula}`);
         }
     } catch (error) {
-        console.error("❌ Error crítico en el Worker:", error);
-        // Reintento automático en 5 segundos
+        console.error("❌ Error en el bucle del Worker:", error);
         setTimeout(procesarConsultas, 5000);
     }
 }
