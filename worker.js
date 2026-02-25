@@ -9,7 +9,7 @@ puppeteer.use(StealthPlugin());
 // --- SERVIDOR DE SALUD PARA RENDER ---
 const app = express();
 const PORT = process.env.PORT || 10000;
-app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
+app.get('/', (req, res) => res.status(200).send('Worker Operativo 🟢'));
 app.listen(PORT, '0.0.0.0');
 
 // --- CONFIGURACIÓN REDIS ---
@@ -29,7 +29,6 @@ async function resolverCaptcha(page) {
             console.log("⏳ Esperando solución del captcha...");
         }
     } catch (e) {
-        console.error("❌ Error en Captcha:", e.message);
         return null;
     }
 }
@@ -42,9 +41,8 @@ async function procesar() {
         while (true) {
             const tareaRaw = await client.brPop('cola_consultas', 0);
             if (!tareaRaw) continue;
-
             const { cedula } = JSON.parse(tareaRaw.element);
-            console.log(`🔎 Consultando cédula: ${cedula}`);
+            console.log(`🔎 Consultando: ${cedula}`);
 
             const browser = await puppeteer.launch({
                 headless: "new",
@@ -53,31 +51,40 @@ async function procesar() {
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--no-zygote',
+                    '--single-process',
                     '--proxy-server=http://p.webshare.io:80'
                 ]
             });
 
             const page = await browser.newPage();
             
-            // Usamos las credenciales de tu panel (Proxy Colombia)
+            // Credenciales de tu IP de Colombia (usuario 200)
             await page.authenticate({
-                username: 'lzwsgumc-200', 
+                username: 'lzwsgumc-200',
                 password: 'satazom7w0zq'
             });
 
             try {
-                // 1. Verificación Geográfica
-                console.log("🌐 Verificando IP y País...");
-                await page.goto('http://ip-api.com/json/', { timeout: 30000 });
-                const geoData = await page.$eval('body', el => JSON.parse(el.innerText));
-                console.log(`🌍 IP: ${geoData.query} | País: ${geoData.country} (${geoData.countryCode})`);
+                // 1. Verificación de IP
+                console.log("🌍 Verificando conexión Colombia...");
+                await page.goto('http://ipv4.webshare.io/', { timeout: 20000 });
+                const ip = await page.$eval('body', el => el.innerText);
+                console.log(`✅ IP Confirmada: ${ip.trim()}`);
 
-                if (geoData.countryCode !== 'CO') {
-                    console.warn("⚠️ ADVERTENCIA: La IP no es de Colombia. Es probable que la Policía bloquee la conexión.");
-                }
+                // 2. Optimización: Bloquear imágenes y CSS para ahorrar RAM en Render
+                await page.setRequestInterception(true);
+                page.on('request', (req) => {
+                    if (['image', 'font'].includes(req.resourceType())) {
+                        req.abort();
+                    } else {
+                        req.continue();
+                    }
+                });
 
-                // 2. Navegar a la Policía
-                console.log("👮 Accediendo al portal de la Policía...");
+                // 3. Navegar a la Policía
+                console.log("👮 Cargando portal de la Policía...");
                 await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
                 
                 await page.goto('https://antecedentes.policia.gov.co/WebJudicial/antecedentes.xhtml', { 
@@ -85,14 +92,17 @@ async function procesar() {
                     timeout: 60000 
                 });
 
-                // 3. Aceptar términos (Con más tiempo de espera)
-                console.log("⚖️ Buscando botón de términos...");
-                await page.waitForSelector('#aceptoTerminos', { timeout: 45000 });
+                // 4. Aceptar Términos
+                console.log("⚖️ Buscando términos...");
+                await page.waitForSelector('#aceptoTerminos', { timeout: 30000 });
                 await page.click('#aceptoTerminos');
-                await page.click('input[type="submit"]');
-                console.log("✅ Términos aceptados.");
+                await page.evaluate(() => {
+                    const btn = document.querySelector('input[type="submit"]');
+                    if (btn) btn.click();
+                });
 
-                // 4. Formulario de Cédula
+                // 5. Llenar Formulario
+                console.log("📝 Ingresando cédula...");
                 await page.waitForSelector('#cedulaInput', { timeout: 20000 });
                 await page.type('#cedulaInput', cedula);
 
@@ -103,14 +113,16 @@ async function procesar() {
                     }, token);
                     await page.click('#btnConsultar');
                     
-                    console.log("🖱️ Consulta enviada. Esperando respuesta final...");
+                    console.log("🖱️ Enviando consulta...");
                     await page.waitForSelector('#panelResultado', { timeout: 30000 });
                     const res = await page.$eval('#panelResultado', el => el.innerText);
                     console.log(`📊 RESULTADO: ${res}`);
+                    
+                    // Aquí podrías enviar el resultado a una API o guardarlo en Redis
                 }
 
             } catch (err) {
-                console.error(`❌ Fallo en la navegación: ${err.message}`);
+                console.error(`❌ Error en el proceso: ${err.message}`);
             }
 
             await browser.close();
