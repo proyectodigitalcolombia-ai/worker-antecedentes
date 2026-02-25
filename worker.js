@@ -6,7 +6,7 @@ import redis from 'redis';
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
-app.listen(PORT, '0.0.0.0', () => console.log(`✅ Health Check en puerto ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`✅ Worker operativo`));
 
 puppeteer.use(StealthPlugin());
 const client = redis.createClient({ url: process.env.REDIS_URL });
@@ -26,65 +26,72 @@ async function procesar() {
             const browser = await puppeteer.launch({
                 headless: "new",
                 executablePath: '/usr/bin/google-chrome-stable',
-                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors']
+                args: [
+                    '--no-sandbox', 
+                    '--disable-setuid-sandbox', 
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process'
+                ]
             });
 
             const page = await browser.newPage();
-            await page.setViewport({ width: 1280, height: 800 });
-            
+            // Identidad de un Chrome en Bogotá, Colombia
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+
             try {
-                console.log("👮 Navegando a puerto 7005...");
+                console.log("👮 Cargando portal...");
                 await page.goto('https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml', { 
                     waitUntil: 'networkidle2', 
                     timeout: 60000 
                 });
 
-                // 1. Simular lectura (Humano)
-                console.log("📜 Simulando lectura de términos...");
-                await page.mouse.wheel({ deltaY: 500 });
+                // 1. Espera humana
+                await new Promise(r => setTimeout(r, 10000));
+
+                console.log("💉 Forzando aceptación interna...");
+                await page.evaluate(() => {
+                    // Marcamos visualmente
+                    const check = document.querySelector('.ui-chkbox-box');
+                    if (check) check.click();
+                    
+                    // Almacenamos en el sessionStorage que ya aceptamos (algunos portales JSF lo usan)
+                    sessionStorage.setItem('aceptoterminos', 'true');
+                });
+
+                await new Promise(r => setTimeout(r, 3000));
+
+                // 2. Acción de envío mediante ejecución de script nativo
+                console.log("🚀 Disparando validación de servidor...");
+                await page.evaluate(() => {
+                    const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Enviar'));
+                    if (btn) {
+                        // Forzamos el evento 'oncomplete' de PrimeFaces si existe
+                        btn.click();
+                    }
+                });
+
+                // ESPERA DE GRACE: Si nos manda a index.xhtml, intentaremos re-entrar
                 await new Promise(r => setTimeout(r, 8000));
 
-                // 2. Click en el checkbox usando su clase de PrimeFaces
-                console.log("⚖️ Marcando checkbox...");
-                await page.evaluate(() => {
-                    const chk = document.querySelector('.ui-chkbox-box') || document.querySelector('div[id*="acepto"]');
-                    if (chk) chk.click();
+                if (page.url().includes('index.xhtml')) {
+                    console.log("⚠️ Redirección detectada. Intentando re-entrada forzada...");
+                    await page.goto('https://antecedentes.policia.gov.co:7005/WebJudicial/consulta.xhtml', { waitUntil: 'networkidle2' }).catch(() => {});
+                }
+
+                // 3. Verificación de campos
+                const final = await page.evaluate(() => {
+                    const i = document.querySelector('input[id*="cedula"]') || document.querySelector('input');
+                    return {
+                        ok: !!i && document.body.innerText.includes('Documento'),
+                        url: window.location.href,
+                        txt: document.body.innerText.substring(0, 50)
+                    };
                 });
 
-                // ESPERA CRÍTICA: Esperamos a que el ViewState de PrimeFaces se actualice
-                await new Promise(r => setTimeout(r, 5000));
-
-                // 3. Click en ENVIAR
-                console.log("🚀 Enviando formulario...");
-                const clickExitoso = await page.evaluate(() => {
-                    const btn = Array.from(document.querySelectorAll('button, .ui-button'))
-                                     .find(b => b.innerText.includes('Enviar') || b.innerText.includes('Aceptar'));
-                    if (btn) {
-                        btn.click();
-                        return true;
-                    }
-                    return false;
-                });
-
-                if (clickExitoso) {
-                    await new Promise(r => setTimeout(r, 10000)); // La transición al formulario es lenta
-                    
-                    const resultado = await page.evaluate(() => {
-                        const input = document.querySelector('input[id*="cedula"]') || document.querySelector('input[type="text"]');
-                        return {
-                            paso: !!input,
-                            txt: document.body.innerText.substring(0, 50).replace(/\n/g, ' ')
-                        };
-                    });
-
-                    if (resultado.paso) {
-                        console.log("🚀 ¡EXITO! Formulario de cédula cargado.");
-                    } else {
-                        console.log(`⚠️ No hubo cambio. Pantalla dice: "${resultado.txt}"`);
-                        console.log("⌨️ Reintento con Enter...");
-                        await page.keyboard.press('Enter');
-                        await new Promise(r => setTimeout(r, 5000));
-                    }
+                if (final.ok) {
+                    console.log("🚀 ¡BRUTAL! Formulario alcanzado.");
+                } else {
+                    console.log(`❌ Bloqueado en: ${final.url}. Contenido: ${final.txt}`);
                 }
 
             } catch (err) {
