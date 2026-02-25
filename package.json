@@ -1,0 +1,16 @@
+{
+  "name": "worker-antecedentes",
+  "version": "1.0.0",
+  "description": "Bot extractor de antecedentes con Puppeteer",
+  "main": "worker.js",
+  "scripts": {
+    "start": "node worker.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "redis": "^4.6.10",
+    "puppeteer": "^21.11.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
