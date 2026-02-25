@@ -2,7 +2,6 @@ const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const redis = require('redis');
 const express = require('express');
-const axios = require('axios');
 
 puppeteer.use(StealthPlugin());
 
@@ -14,79 +13,81 @@ const client = redis.createClient({ url: process.env.REDIS_URL });
 async function procesar() {
     try {
         if (!client.isOpen) await client.connect();
-        console.log("📡 Worker Pro listo. Esperando tareas...");
+        console.log("📡 Worker Pro Iniciado. Esperando tareas...");
 
         while (true) {
             const tareaRaw = await client.brPop('cola_consultas', 0);
             if (!tareaRaw) continue;
             const { cedula } = JSON.parse(tareaRaw.element);
             
+            console.log(`🔎 Procesando Cédula: ${cedula}`);
+
             const browser = await puppeteer.launch({
-                headless: "new",
+                headless: "new", // Usamos el motor más moderno
                 executablePath: '/usr/bin/google-chrome',
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-blink-features=AutomationControlled',
+                    '--window-size=1920,1080',
                     '--proxy-server=http://p.webshare.io:80'
                 ]
             });
 
             const page = await browser.newPage();
-            await page.setViewport({ width: 1280, height: 800 });
+            
+            // 1. Configuración de Pantalla y User-Agent Real
+            await page.setViewport({ width: 1920, height: 1080 });
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+
+            // 2. Autenticación Proxy
             await page.authenticate({ username: 'lzwsgumc-200', password: 'satazom7w0zq' });
 
             try {
-                console.log(`🔎 Consultando: ${cedula}`);
-                await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-
-                // 1. Navegación con espera de red tranquila
+                // 3. Navegación con tiempo de gracia
+                console.log("👮 Accediendo al portal...");
                 await page.goto('https://antecedentes.policia.gov.co/WebJudicial/antecedentes.xhtml', { 
-                    waitUntil: 'networkidle2', 
-                    timeout: 60000 
+                    waitUntil: 'load', 
+                    timeout: 70000 
                 });
 
-                // 2. TRUCO PRO: Scroll para activar eventos de visibilidad
-                console.log("⚖️ Analizando página...");
-                await page.evaluate(() => window.scrollBy(0, 500));
-                await new Promise(r => setTimeout(r, 3000));
+                // 4. Pausa táctica: La Policía carga scripts de detección al inicio
+                await new Promise(r => setTimeout(r, 6000));
 
-                // 3. Intento de clic forzado por JavaScript (salta el error de 'Waiting failed')
-                const clicsExitosos = await page.evaluate(() => {
-                    const check = document.querySelector('#aceptoTerminos');
+                // 5. Intento de Clic Forzado via Coordenadas/JS
+                const clickResultado = await page.evaluate(() => {
+                    const el = document.querySelector('#aceptoTerminos');
                     const btn = document.querySelector('input[type="submit"]');
-                    if (check && btn) {
-                        check.click();
-                        // Pequeño delay interno para que se habilite el botón
-                        setTimeout(() => btn.click(), 500);
-                        return true;
+                    if (el && btn) {
+                        el.click();
+                        // Disparamos el evento de cambio manualmente por si acaso
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        setTimeout(() => btn.click(), 1000);
+                        return "OK";
                     }
-                    return false;
+                    return document.title || "Página Vacía";
                 });
 
-                if (clicsExitosos) {
-                    console.log("✅ Selector operado mediante inyección directa.");
+                if (clickResultado === "OK") {
+                    console.log("✅ Selector activado via JS nativo.");
                 } else {
-                    // Si falla el JS, intentamos el método tradicional una vez más
-                    console.log("⚠️ JS directo falló, intentando selector tradicional...");
-                    await page.waitForSelector('#aceptoTerminos', { visible: true, timeout: 15000 });
-                    await page.click('#aceptoTerminos');
-                    await page.click('input[type="submit"]');
+                    console.error(`❌ No se halló el botón. La página dice: "${clickResultado}"`);
+                    // Tomamos una captura de texto para depurar
+                    const bodyText = await page.evaluate(() => document.body.innerText.substring(0, 200));
+                    console.log(`📄 Texto detectado: ${bodyText}`);
                 }
 
-                // 4. Verificación de entrada al formulario
-                await page.waitForSelector('#cedulaInput', { timeout: 20000 });
-                console.log("🚀 ¡Logramos entrar al formulario de consulta!");
+                // 6. Esperar el siguiente paso
+                await page.waitForSelector('#cedulaInput', { timeout: 25000 });
+                console.log("🚀 ¡Logramos entrar al formulario!");
 
             } catch (err) {
-                const title = await page.title();
-                console.error(`❌ Error en el proceso: ${err.message}. Título: ${title}`);
-                // Si el título es "403 Forbidden", la IP de ETB ha sido bloqueada temporalmente.
+                console.error(`❌ Error de navegación: ${err.message}`);
             }
 
             await browser.close();
-            console.log("🏁 Sesión cerrada.");
+            console.log("🏁 Sesión finalizada.");
         }
     } catch (err) {
         setTimeout(procesar, 5000);
