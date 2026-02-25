@@ -41,55 +41,53 @@ async function procesar() {
                     timeout: 60000 
                 });
 
-                await new Promise(r => setTimeout(r, 12000));
+                // Esperamos a que los scripts de PrimeFaces se asienten
+                await new Promise(r => setTimeout(r, 15000));
 
-                console.log("🎯 Buscando checkbox por ubicación de texto...");
+                console.log("🎯 Buscando ubicación visual del checkbox...");
                 
-                // 1. Buscamos las coordenadas del texto "Acepto" para clickear el check que está al lado
+                // 1. Buscamos las coordenadas del texto que acompaña al checkbox
                 const coords = await page.evaluate(() => {
                     const el = Array.from(document.querySelectorAll('td, label, span'))
                                     .find(e => e.innerText.includes('Acepto') || e.innerText.includes('términos'));
                     
                     if (el) {
                         const rect = el.getBoundingClientRect();
-                        return { x: rect.left - 15, y: rect.top + (rect.height / 2) }; // Click un poco a la izquierda del texto
+                        // El checkbox suele estar a la izquierda del texto "Acepto..."
+                        return { x: rect.left - 20, y: rect.top + (rect.height / 2) };
                     }
                     return null;
                 });
 
-                if (coords) {
-                    console.log(`⚖️ Clickeando checkbox en coordenadas: X:${coords.x} Y:${coords.y}`);
+                if (coords && coords.x > 0) {
+                    console.log(`⚖️ Click físico en coordenadas: X:${Math.round(coords.x)} Y:${Math.round(coords.y)}`);
                     await page.mouse.click(coords.x, coords.y);
                 } else {
-                    console.log("⚠️ No se encontró el texto del checkbox, intentando click por clase...");
-                    await page.evaluate(() => {
-                        const c = document.querySelector('.ui-chkbox-box');
-                        if (c) c.click();
-                    });
+                    console.log("⚠️ No se halló el texto, intentando click por clase .ui-chkbox-box");
+                    await page.click('.ui-chkbox-box').catch(() => {});
                 }
 
-                await new Promise(r => setTimeout(r, 1000));
+                await new Promise(r => setTimeout(r, 1500));
 
-                // 2. Click en el botón ENVIAR que ya sabemos que existe
-                console.log("🚀 Presionando botón Enviar...");
+                // 2. Click en el botón "Enviar" que ya sabemos que existe
+                console.log("🚀 Pulsando botón Enviar...");
                 await page.evaluate(() => {
                     const btn = Array.from(document.querySelectorAll('button, .ui-button'))
                                      .find(b => b.innerText.includes('Enviar'));
                     if (btn) btn.click();
                 });
 
-                await new Promise(r => setTimeout(r, 3000));
+                await new Promise(r => setTimeout(r, 4000));
                 
-                // 3. Verificamos si pasamos la pantalla
+                // 3. Verificamos si pasamos al formulario de cédula
                 const exito = await page.evaluate(() => {
-                    const inputCedula = document.querySelector('input[id*="cedula"]') || document.querySelector('input[type="text"]');
-                    return !!inputCedula && document.body.innerText.includes('Cédula');
+                    return document.body.innerText.includes('Documento') || !!document.querySelector('input[type="text"]');
                 });
 
                 if (exito) {
                     console.log("📝 ¡FORMULARIO DE CÉDULA ALCANZADO!");
                 } else {
-                    console.log("⌨️ Reintentando con Enter...");
+                    console.log("⌨️ Reintentando envío con teclado...");
                     await page.keyboard.press('Enter');
                     await new Promise(r => setTimeout(r, 3000));
                 }
