@@ -21,77 +21,68 @@ async function procesar() {
             if (!tareaRaw) continue;
 
             const { cedula } = JSON.parse(tareaRaw.element);
-            console.log(`🔎 Iniciando consulta para: ${cedula}`);
+            console.log(`🔎 Iniciando consulta directa para: ${cedula}`);
 
             const browser = await puppeteer.launch({
                 headless: "new",
                 executablePath: '/usr/bin/google-chrome-stable',
                 args: [
                     '--no-sandbox', 
-                    '--disable-setuid-sandbox', 
-                    '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process'
+                    '--disable-setuid-sandbox',
+                    '--disable-blink-features=AutomationControlled', // Esconde que es un bot
+                    '--lang=es-ES,es;q=0.9' // Simula idioma local
                 ]
             });
 
             const page = await browser.newPage();
-            // Identidad de un Chrome en Bogotá, Colombia
-            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+            
+            // Forzamos que el navegador no se identifique como bot
+            await page.evaluateOnNewDocument(() => {
+                Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            });
 
             try {
-                console.log("👮 Cargando portal...");
+                console.log("👮 Navegando a la URL directa...");
+                // Usamos la URL que sugeriste
                 await page.goto('https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml', { 
                     waitUntil: 'networkidle2', 
                     timeout: 60000 
                 });
 
-                // 1. Espera humana
                 await new Promise(r => setTimeout(r, 10000));
 
-                console.log("💉 Forzando aceptación interna...");
-                await page.evaluate(() => {
-                    // Marcamos visualmente
-                    const check = document.querySelector('.ui-chkbox-box');
-                    if (check) check.click();
-                    
-                    // Almacenamos en el sessionStorage que ya aceptamos (algunos portales JSF lo usan)
-                    sessionStorage.setItem('aceptoterminos', 'true');
-                });
-
-                await new Promise(r => setTimeout(r, 3000));
-
-                // 2. Acción de envío mediante ejecución de script nativo
-                console.log("🚀 Disparando validación de servidor...");
-                await page.evaluate(() => {
-                    const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Enviar'));
-                    if (btn) {
-                        // Forzamos el evento 'oncomplete' de PrimeFaces si existe
-                        btn.click();
+                // Intentamos la acción de aceptación "suave"
+                console.log("⚖️ Intentando marcar checkbox...");
+                const checkFound = await page.evaluate(() => {
+                    const chk = document.querySelector('.ui-chkbox-box');
+                    if (chk) {
+                        chk.click();
+                        return true;
                     }
+                    return false;
                 });
 
-                // ESPERA DE GRACE: Si nos manda a index.xhtml, intentaremos re-entrar
-                await new Promise(r => setTimeout(r, 8000));
-
-                if (page.url().includes('index.xhtml')) {
-                    console.log("⚠️ Redirección detectada. Intentando re-entrada forzada...");
-                    await page.goto('https://antecedentes.policia.gov.co:7005/WebJudicial/consulta.xhtml', { waitUntil: 'networkidle2' }).catch(() => {});
+                if (checkFound) {
+                    await new Promise(r => setTimeout(r, 3000));
+                    console.log("🚀 Pulsando enviar...");
+                    await page.keyboard.press('Enter'); // El Enter suele ser más seguro que el click por código
                 }
 
-                // 3. Verificación de campos
+                await new Promise(r => setTimeout(r, 8000));
+
                 const final = await page.evaluate(() => {
-                    const i = document.querySelector('input[id*="cedula"]') || document.querySelector('input');
                     return {
-                        ok: !!i && document.body.innerText.includes('Documento'),
                         url: window.location.href,
-                        txt: document.body.innerText.substring(0, 50)
+                        body: document.body.innerText.substring(0, 100).replace(/\n/g, ' '),
+                        input: !!document.querySelector('input')
                     };
                 });
 
-                if (final.ok) {
-                    console.log("🚀 ¡BRUTAL! Formulario alcanzado.");
+                if (final.url.includes('antecedentes.xhtml') && final.input) {
+                    console.log("🚀 ¡ÉXITO! Estamos dentro del formulario.");
                 } else {
-                    console.log(`❌ Bloqueado en: ${final.url}. Contenido: ${final.txt}`);
+                    console.log(`⚠️ Seguimos fuera. URL: ${final.url}`);
+                    console.log(`📝 Contenido: ${final.body}`);
                 }
 
             } catch (err) {
