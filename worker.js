@@ -6,10 +6,13 @@ const axios = require('axios');
 
 puppeteer.use(StealthPlugin());
 
+// --- SERVIDOR PARA RENDER (Port Binding) ---
 const app = express();
+const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.status(200).send('Worker Antecedentes Operativo 👮‍♂️'));
-app.listen(process.env.PORT || 10000);
+app.listen(PORT, () => console.log(`🚀 Servidor de salud en puerto ${PORT}`));
 
+// --- CONFIGURACIÓN REDIS ---
 const client = redis.createClient({ url: process.env.REDIS_URL });
 
 async function resolverCaptcha(page) {
@@ -38,12 +41,12 @@ async function resolverCaptcha(page) {
 async function procesar() {
     try {
         if (!client.isOpen) await client.connect();
-        console.log("🚀 Worker conectado a Redis y listo para rotar IPs.");
+        console.log("📡 Conectado a Redis. Esperando tareas...");
 
         while (true) {
             const tareaRaw = await client.brPop('cola_consultas', 0);
             const { cedula } = JSON.parse(tareaRaw.element);
-            console.log(`🔎 Consultando cédula: ${cedula}`);
+            console.log(`🔎 Iniciando trámite para cédula: ${cedula}`);
 
             const browser = await puppeteer.launch({
                 headless: "new",
@@ -52,7 +55,7 @@ async function procesar() {
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
-                    '--disable-http2', // VITAL: La policía bloquea túneles HTTP2
+                    '--disable-http2', // CRÍTICO: Evita el ERR_TUNNEL en sitios gubernamentales
                     '--ignore-certificate-errors',
                     `--proxy-server=http://${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`
                 ]
@@ -60,60 +63,20 @@ async function procesar() {
 
             const page = await browser.newPage();
             
-            // Autenticación con el usuario rotativo
+            // Autenticación con el usuario rotativo que configuraste
             await page.authenticate({
                 username: process.env.PROXY_USER,
                 password: process.env.PROXY_PASS
             });
 
             try {
-                // Paso 1: Test de túnel (Si esto falla, el proxy está caído)
-                console.log("🌐 Verificando túnel de red...");
-                await page.goto('https://api.ipify.org', { waitUntil: 'networkidle2', timeout: 30000 });
+                // 1. Verificación de IP (Para confirmar que el proxy funciona)
+                console.log("🌐 Abriendo túnel de red...");
+                await page.goto('https://api.ipify.org', { waitUntil: 'networkidle2', timeout: 20000 });
                 const ip = await page.$eval('body', el => el.innerText);
-                console.log(`✅ Túnel OK! IP asignada: ${ip}`);
+                console.log(`✅ Túnel OK! IP Proxy: ${ip}`);
 
-                // Paso 2: Navegación a la Policía con User-Agent real
+                // 2. Navegación a la Policía
                 console.log("👮 Navegando a Policía Nacional...");
-                await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
-                
-                // Usamos una espera más larga y manejamos el error de túnel específico
-                await page.goto('https://srvandroid.policia.gov.co/Antecedentes/', { 
-                    waitUntil: 'networkidle2', 
-                    timeout: 90000 
-                });
-
-                console.log("📝 Página cargada. Llenando formulario...");
-                await page.waitForSelector('#Cedula', { timeout: 15000 });
-                await page.type('#Cedula', cedula);
-
-                const token = await resolverCaptcha(page);
-                if (token) {
-                    await page.evaluate((t) => {
-                        document.getElementById('g-recaptcha-response').innerHTML = t;
-                    }, token);
-                    
-                    await page.click('#Consultar');
-                    console.log("🖱️ Consultando...");
-                    
-                    await page.waitForSelector('#Resultado', { timeout: 30000 });
-                    const res = await page.$eval('#Resultado', el => el.innerText);
-                    console.log(`📊 RESULTADO FINAL: ${res}`);
-                }
-
-            } catch (err) {
-                console.error(`❌ Error en el proceso: ${err.message}`);
-                // Si falla el túnel aquí, la IP está bloqueada por la Policía
-                console.log("💡 Sugerencia: La IP fue rechazada por el destino. Reintentando con otra IP...");
-            }
-
-            await browser.close();
-            console.log(`🏁 Sesión terminada para ${cedula}`);
-        }
-    } catch (err) {
-        console.error("❌ Error fatal:", err);
-        setTimeout(procesar, 5000);
-    }
-}
-
-procesar();
+                // User Agent de Chrome real para evitar bloqueos
+                await
