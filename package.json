@@ -1,7 +1,7 @@
 {
   "name": "worker-antecedentes",
   "version": "1.0.0",
-  "description": "Worker con Node 20 y Puppeteer",
+  "description": "Worker para consulta de antecedentes",
   "main": "worker.js",
   "scripts": {
     "start": "node worker.js"
