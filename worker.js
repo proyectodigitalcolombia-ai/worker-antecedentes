@@ -3,97 +3,110 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import redis from 'redis';
 
+// --- SERVIDOR PARA RENDER ---
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
-app.listen(PORT, '0.0.0.0', () => console.log(`✅ Worker operativo`));
+app.listen(PORT, '0.0.0.0', () => console.log(`✅ Health Check en puerto ${PORT}`));
 
+// --- CONFIGURACIÓN ---
 puppeteer.use(StealthPlugin());
 const client = redis.createClient({ url: process.env.REDIS_URL });
 
 async function procesar() {
     try {
         if (!client.isOpen) await client.connect();
-        console.log("✅ Conectado a Redis.");
+        console.log("✅ Conectado a Redis. Esperando tareas...");
 
         while (true) {
             const tareaRaw = await client.brPop('cola_consultas', 0);
             if (!tareaRaw) continue;
 
             const { cedula } = JSON.parse(tareaRaw.element);
-            console.log(`🔎 Iniciando consulta directa para: ${cedula}`);
+            console.log(`🔎 Iniciando consulta para: ${cedula}`);
 
             const browser = await puppeteer.launch({
                 headless: "new",
                 executablePath: '/usr/bin/google-chrome-stable',
                 args: [
-                    '--no-sandbox', 
+                    '--no-sandbox',
                     '--disable-setuid-sandbox',
-                    '--disable-blink-features=AutomationControlled', // Esconde que es un bot
-                    '--lang=es-ES,es;q=0.9' // Simula idioma local
+                    '--disable-dev-shm-usage',
+                    '--lang=es-419,es;q=0.9', // Idioma Latino
+                    // '--proxy-server=IP:PUERTO' // <--- Descomenta esto si usas Proxy
                 ]
             });
 
             const page = await browser.newPage();
             
-            // Forzamos que el navegador no se identifique como bot
+            // Configuración de Identidad
+            await page.setViewport({ width: 1366, height: 768 });
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+            await page.setExtraHTTPHeaders({ 'Accept-Language': 'es-419,es;q=0.9' });
+
+            // Evitar detección de bot
             await page.evaluateOnNewDocument(() => {
                 Object.defineProperty(navigator, 'webdriver', { get: () => false });
             });
 
             try {
                 console.log("👮 Navegando a la URL directa...");
-                // Usamos la URL que sugeriste
                 await page.goto('https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml', { 
                     waitUntil: 'networkidle2', 
                     timeout: 60000 
                 });
 
-                await new Promise(r => setTimeout(r, 10000));
+                // Espera inicial para que el servidor JSF/PrimeFaces se estabilice
+                await new Promise(r => setTimeout(r, 12000));
 
-                // Intentamos la acción de aceptación "suave"
-                console.log("⚖️ Intentando marcar checkbox...");
-                const checkFound = await page.evaluate(() => {
-                    const chk = document.querySelector('.ui-chkbox-box');
-                    if (chk) {
-                        chk.click();
-                        return true;
-                    }
-                    return false;
-                });
+                console.log("🎯 Interactuando con el Checkbox...");
+                // Usamos las coordenadas que confirmamos en los logs anteriores
+                await page.mouse.move(508, 547);
+                await new Promise(r => setTimeout(r, 500));
+                await page.mouse.click(508, 547);
 
-                if (checkFound) {
-                    await new Promise(r => setTimeout(r, 3000));
-                    console.log("🚀 Pulsando enviar...");
-                    await page.keyboard.press('Enter'); // El Enter suele ser más seguro que el click por código
-                }
+                // Espera AJAX: Vital para que el servidor valide el "Acepto"
+                console.log("⏳ Sincronizando términos (AJAX)...");
+                await new Promise(r => setTimeout(r, 5000));
 
+                console.log("🚀 Enviando formulario...");
+                await page.keyboard.press('Enter'); 
+
+                // Espera de transición
                 await new Promise(r => setTimeout(r, 8000));
 
-                const final = await page.evaluate(() => {
+                const validacion = await page.evaluate(() => {
+                    const inp = document.querySelector('input[id*="cedula"]') || 
+                                document.querySelector('input[type="text"]');
                     return {
+                        exito: !!inp,
                         url: window.location.href,
-                        body: document.body.innerText.substring(0, 100).replace(/\n/g, ' '),
-                        input: !!document.querySelector('input')
+                        contenido: document.body.innerText.substring(0, 80).replace(/\n/g, ' ')
                     };
                 });
 
-                if (final.url.includes('antecedentes.xhtml') && final.input) {
-                    console.log("🚀 ¡ÉXITO! Estamos dentro del formulario.");
+                if (validacion.exito) {
+                    console.log("📝 ¡EXITO! Formulario de consulta alcanzado.");
+                    // Aquí podrías continuar para escribir la cédula y resolver captcha
                 } else {
-                    console.log(`⚠️ Seguimos fuera. URL: ${final.url}`);
-                    console.log(`📝 Contenido: ${final.body}`);
+                    console.log(`⚠️ Seguimos fuera. URL: ${validacion.url}`);
+                    console.log(`📝 Texto actual: "${validacion.contenido}..."`);
+                    
+                    // Si fuimos redirigidos a index.xhtml, es bloqueo de IP
+                    if (validacion.url.includes('index.xhtml')) {
+                        console.log("🚫 BLOQUEO DETECTADO: El servidor nos expulsó al inicio.");
+                    }
                 }
 
             } catch (err) {
-                console.error(`❌ Error: ${err.message}`);
+                console.error(`❌ Error en el proceso: ${err.message}`);
             }
 
             await browser.close();
             console.log("🏁 Sesión finalizada.");
         }
     } catch (err) {
-        console.error("❌ Error Crítico:", err);
+        console.error("❌ Error Crítico de Redis/Browser:", err);
         setTimeout(procesar, 5000);
     }
 }
