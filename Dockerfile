@@ -1,26 +1,11 @@
 FROM node:20-bookworm
 
-# 1. Instalamos TODO lo necesario para X11
+# 1. Instalamos dependencias incluyendo FUENTES (crítico para Xvfb)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
-    gnupg \
-    ca-certificates \
-    xvfb \
-    xauth \
-    x11-xkb-utils \
-    x11-utils \
-    dbus-x11 \
-    # Dependencias de librerías para Chrome
-    libnss3 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcups2 \
-    libgbm1 \
-    libasound2 \
-    libpangocairo-1.0-0 \
-    libxss1 \
-    libgtk-3-0 \
-    libxshmfence1 \
+    wget gnupg ca-certificates xvfb xauth x11-xkb-utils x11-utils dbus-x11 \
+    xfonts-base xfonts-75dpi xfonts-100dpi \
+    libnss3 libatk-bridge2.0-0 libatk1.0-0 libcups2 libgbm1 \
+    libasound2 libpangocairo-1.0-0 libxss1 libgtk-3-0 libxshmfence1 \
     fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
@@ -35,6 +20,7 @@ WORKDIR /app
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 ENV NODE_VERSION=20
+ENV DISPLAY=:99
 
 COPY package*.json ./
 RUN npm install
@@ -43,5 +29,5 @@ COPY . .
 
 EXPOSE 10000
 
-# Script de arranque que limpia bloqueos previos de Xvfb
-CMD rm -f /tmp/.X99-lock && xvfb-run -a -e /dev/stdout --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" node worker.js
+# 3. Lanzamiento manual: Limpia, arranca Xvfb en el fondo y luego arranca Node
+CMD Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset & node worker.js
