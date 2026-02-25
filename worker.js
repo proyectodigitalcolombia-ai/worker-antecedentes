@@ -6,61 +6,62 @@ const browser = await puppeteer.launch({
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-blink-features=AutomationControlled',
-                    '--window-size=1920,1080', // Resolución real
                     '--proxy-server=http://p.webshare.io:80'
                 ]
             });
 
             const page = await browser.newPage();
             
-            // Forzamos un viewport real
-            await page.setViewport({ width: 1920, height: 1080 });
-
+            // Siendo cuenta de pago, podemos permitirnos una resolución más alta
+            await page.setViewport({ width: 1366, height: 768 });
             await page.authenticate({ username: 'lzwsgumc-200', password: 'satazom7w0zq' });
 
             try {
-                // User-Agent idéntico a un Chrome de escritorio actualizado
                 await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
-                console.log("👮 Navegando a la Policía (Modo Camuflaje)...");
-                
-                // Quitamos el waitUntil estricto y usamos un tiempo de espera manual
+                console.log("👮 Cargando portal de la Policía...");
+                // En cuentas de pago, 'networkidle0' es más seguro (espera a que no haya NADA de tráfico)
                 await page.goto('https://antecedentes.policia.gov.co/WebJudicial/antecedentes.xhtml', { 
-                    timeout: 60000 
+                    waitUntil: 'networkidle0', 
+                    timeout: 80000 
                 });
 
-                // Esperamos a que la página "respire" y cargue sus scripts internos
-                console.log("⏳ Esperando renderizado interno...");
-                await new Promise(r => setTimeout(r, 7000)); 
+                console.log("⚖️ Buscando términos (Búsqueda Profunda)...");
 
-                // Intentamos detectar si hay un mensaje de error en el texto de la página
-                const info = await page.evaluate(() => {
-                    const bodyText = document.body.innerText;
-                    const terms = document.querySelector('#aceptoTerminos');
-                    return {
-                        hasTerms: !!terms,
-                        title: document.title,
-                        textSnippet: bodyText.substring(0, 100)
-                    };
+                // Intentamos encontrar el botón por múltiples métodos
+                const botonAcepto = await page.evaluateHandle(() => {
+                    // Intento 1: Por ID
+                    let el = document.querySelector('#aceptoTerminos');
+                    // Intento 2: Por nombre si el ID falló
+                    if (!el) el = document.querySelector('input[name*="acepto"]');
+                    return el;
                 });
 
-                console.log(`📄 Título: "${info.title}" | Texto inicial: "${info.textSnippet}"`);
-
-                if (info.hasTerms) {
-                    console.log("⚖️ Selector encontrado. Procediendo...");
-                    await page.click('#aceptoTerminos');
-                    await new Promise(r => setTimeout(r, 1000));
-                    await page.click('input[type="submit"]');
+                if (botonAcepto.asElement()) {
+                    console.log("✅ Botón detectado. Marcando...");
+                    await botonAcepto.asElement().click();
                     
+                    await new Promise(r => setTimeout(r, 2000)); // Pausa de seguridad
+
+                    await page.evaluate(() => {
+                        const btn = document.querySelector('input[type="submit"]');
+                        if (btn) btn.click();
+                    });
+
+                    console.log("🚀 Entrando al formulario de consulta...");
                     await page.waitForSelector('#cedulaInput', { timeout: 20000 });
-                    console.log("📝 ¡Éxito! Formulario de cédula visible.");
                 } else {
-                    throw new Error("El botón de términos no existe en el DOM actual.");
+                    // Diagnóstico Pro: Guardamos el título y un pedazo del HTML
+                    const diagnostico = await page.evaluate(() => ({
+                        titulo: document.title,
+                        html: document.body.innerHTML.substring(0, 300)
+                    }));
+                    console.error(`❌ El botón no existe. Título: ${diagnostico.titulo}`);
+                    console.log(`🔎 Contenido recibido: ${diagnostico.html}`);
                 }
 
             } catch (err) {
-                console.error(`❌ Fallo: ${err.message}`);
-                // Si el título es "Access Denied", Webshare nos está dando una IP quemada.
+                console.error(`❌ Error en el proceso: ${err.message}`);
             }
 
             await browser.close();
