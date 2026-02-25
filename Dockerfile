@@ -1,19 +1,18 @@
-# Usamos una imagen que ya tiene Chrome y Node instalados
+# Usamos la imagen oficial de Puppeteer que ya trae Chrome
 FROM ghcr.io/puppeteer/puppeteer:21.11.0
 
 USER root
-
 WORKDIR /app
 
-# Copiamos solo lo necesario primero para aprovechar el cache
+# Copiamos dependencias
 COPY package*.json ./
 RUN npm install
 
 # Copiamos el resto del código
 COPY . .
 
-# El puerto que configuraste en Render
+# Exponemos el puerto para el Health Check de Render
 EXPOSE 10000
 
-# Comando para iniciar
+# Comando de arranque
 CMD ["node", "worker.js"]
