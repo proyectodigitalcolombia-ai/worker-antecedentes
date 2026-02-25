@@ -1,21 +1,16 @@
-# Usamos una versión específica y más ligera
 FROM ghcr.io/puppeteer/puppeteer:21.11.0
 
+# Cambiamos a root para instalar lo necesario
 USER root
-
-# Evitamos que Puppeteer intente descargar Chrome otra vez (ya viene en la imagen)
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
 
 WORKDIR /app
 
+# Copiamos archivos de dependencias
 COPY package*.json ./
+RUN npm install
 
-# Instalación limpia
-RUN npm install --omit=dev
-
+# Copiamos el resto del código
 COPY . .
 
-EXPOSE 10000
-
+# Comando de inicio (coincide con tu imagen)
 CMD ["node", "worker.js"]
