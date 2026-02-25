@@ -3,11 +3,13 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import redis from 'redis';
 
+// --- 1. SERVIDOR DE SALUD ---
 const app = express();
 const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
-app.listen(PORT, '0.0.0.0', () => console.log(`✅ Health Check en puerto ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`✅ Servidor de salud en puerto ${PORT}`));
 
+// --- 2. CONFIGURACIÓN ---
 puppeteer.use(StealthPlugin());
 const client = redis.createClient({ url: process.env.REDIS_URL });
 
@@ -52,44 +54,43 @@ async function procesar() {
                 console.log("✅ Página cargada. Esperando renderizado...");
                 await new Promise(r => setTimeout(r, 12000));
 
-                // 1. Verificamos qué leyó el bot
-                const bodyText = await page.evaluate(() => document.body.innerText.substring(0, 200));
-                console.log(`📄 Contenido inicial: "${bodyText.replace(/\n/g, ' ')}..."`);
+                // Verificación de contenido para logs
+                const bodyText = await page.evaluate(() => document.body.innerText.substring(0, 150));
+                console.log(`📄 Texto detectado: "${bodyText.replace(/\n/g, ' ')}..."`);
 
-                // 2. Buscamos el formulario con soporte para Frames
                 const resultado = await page.evaluate(() => {
-                    const buscarEnDoc = (doc) => {
-                        const check = doc.querySelector('input[type="checkbox"]');
-                        const btn = doc.querySelector('input[type="submit"], button[type="submit"]');
-                        if (check && btn) {
-                            check.click();
-                            return { found: true, btnId: btn.id || 'sin-id' };
-                        }
-                        return { found: false };
-                    };
+                    // El checkbox de la policía suele ser un DIV con esta clase (PrimeFaces)
+                    const checkPF = document.querySelector('.ui-chkbox-box');
+                    const checkStd = document.querySelector('input[type="checkbox"]');
+                    const targetCheck = checkPF || checkStd;
 
-                    let res = buscarEnDoc(document);
-                    if (!res.found) {
-                        const frames = Array.from(document.querySelectorAll('iframe'));
-                        for (let f of frames) {
-                            try {
-                                let fRes = buscarEnDoc(f.contentDocument || f.contentWindow.document);
-                                if (fRes.found) { res = fRes; break; }
-                            } catch (e) {}
-                        }
+                    // El botón suele ser un botón con clase ui-button o un input submit
+                    const btnPF = document.querySelector('.ui-button');
+                    const btnStd = document.querySelector('input[type="submit"], button[type="submit"]');
+                    const targetBtn = btnPF || btnStd;
+
+                    if (targetCheck && targetBtn) {
+                        targetCheck.click();
+                        return { found: true, method: checkPF ? 'PrimeFaces' : 'Standard' };
                     }
-                    return res;
+                    return { found: false, hasCheck: !!targetCheck, hasBtn: !!targetBtn };
                 });
 
                 if (resultado.found) {
-                    console.log("⚖️ Términos aceptados.");
-                    // Click manual al botón de enviar tras el checkbox
+                    console.log(`⚖️ Términos localizados (${resultado.method}). Aceptando...`);
+                    await new Promise(r => setTimeout(r, 1500));
+                    
+                    // Presionamos Enter como respaldo al click
                     await page.keyboard.press('Enter'); 
                     
-                    await page.waitForSelector('input', { timeout: 15000 });
-                    console.log("📝 ¡Formulario de consulta alcanzado!");
+                    console.log("⏳ Esperando formulario de datos...");
+                    // Esperamos a que aparezca cualquier input (el de la cédula)
+                    await page.waitForSelector('input', { timeout: 20000 });
+                    console.log("📝 ¡Formulario de consulta ALCANZADO!");
+                    
+                    // Aquí podrías tomar una captura del captcha
                 } else {
-                    console.log("⚠️ No se encontró el formulario. Posible bloqueo o cambio de interfaz.");
+                    console.log("⚠️ No se encontró el botón o check. Estado:", resultado);
                 }
 
             } catch (err) {
@@ -97,7 +98,7 @@ async function procesar() {
             }
 
             await browser.close();
-            console.log("🏁 Sesión finalizada.");
+            console.log("🏁 Sesión finalizada. Esperando nueva tarea...");
         }
     } catch (err) {
         console.error("❌ Error Crítico:", err);
