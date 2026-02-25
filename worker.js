@@ -5,46 +5,52 @@ const browser = await puppeteer.launch({
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
-                    '--disable-gpu',
+                    '--disable-blink-features=AutomationControlled', // Quita la marca de "bot"
                     '--proxy-server=http://p.webshare.io:80'
                 ]
             });
 
             const page = await browser.newPage();
-            await page.authenticate({ username: 'lzwsgumc-200', password: 'satazom7w0zq' });
-
-            // OPTIMIZACIÓN: Solo bloqueamos imágenes. Dejamos que cargue CSS y JS.
-            await page.setRequestInterception(true);
-            page.on('request', (req) => {
-                if (req.resourceType() === 'image') {
-                    req.abort();
-                } else {
-                    req.continue();
-                }
+            
+            // Ocultar Puppeteer más a fondo
+            await page.evaluateOnNewDocument(() => {
+                Object.defineProperty(navigator, 'webdriver', { get: () => false });
             });
+
+            await page.authenticate({ username: 'lzwsgumc-200', password: 'satazom7w0zq' });
 
             try {
                 console.log("👮 Cargando portal de la Policía...");
-                // Quitamos el domcontentloaded y usamos networkidle2 para asegurar que cargue el formulario
+                // Usamos un User-Agent de Windows real y reciente
+                await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');
+
+                // Navegamos con una espera más relajada
                 await page.goto('https://antecedentes.policia.gov.co/WebJudicial/antecedentes.xhtml', { 
                     waitUntil: 'networkidle2', 
-                    timeout: 60000 
+                    timeout: 70000 
                 });
 
+                // Esperamos un segundo extra para que los scripts de la página se calmen
+                await new Promise(r => setTimeout(r, 2000));
+
                 console.log("⚖️ Buscando términos...");
-                // Intentamos encontrar el botón incluso si el ID cambia ligeramente o tarda
-                await page.waitForSelector('#aceptoTerminos', { visible: true, timeout: 35000 });
+                // Intentamos buscar por ID o por texto si el ID falla
+                await page.waitForSelector('#aceptoTerminos', { visible: true, timeout: 40000 });
                 
+                console.log("✅ Selector encontrado. Haciendo clic...");
                 await page.click('#aceptoTerminos');
                 
-                // Pequeña pausa para que el botón de Continuar se habilite
-                await new Promise(r => setTimeout(r, 1000));
+                await new Promise(r => setTimeout(r, 5000)); // Pausa humana
                 
                 await page.click('input[type="submit"]');
-                console.log("✅ ¡Logramos entrar al formulario!");
+                console.log("🚀 Entramos al formulario de cédula.");
 
             } catch (err) {
-                // Si falla, tomamos el título para saber si hubo un error 403 o similar
+                // Capturamos lo que ve el bot para saber qué pasó
                 const title = await page.title();
-                console.error(`❌ Fallo: ${err.message}. Título de página: ${title}`);
+                const content = await page.content();
+                console.error(`❌ Error: ${err.message}. Título: ${title}`);
+                if (content.includes("Cloudflare") || content.includes("sucuri")) {
+                    console.error("🚫 Bloqueo de Firewall detectado (Bot Check)");
+                }
             }
