@@ -1,22 +1,15 @@
-import express from 'express';
-import redis from 'redis';
-import pkg from 'https-proxy-agent';
-const { HttpsProxyAgent } = pkg;
-
-console.log("🚀 Iniciando Worker...");
-
-const app = express();
-app.get('/', (req, res) => res.send('OK'));
-app.listen(process.env.PORT || 10000, () => {
-    console.log("✅ Servidor Express arriba");
-});
-
-const client = redis.createClient({ url: process.env.REDIS_URL });
-client.on('error', err => console.log('❌ Error Redis:', err));
-
-async function test() {
-    await client.connect();
-    console.log("📥 Conectado a Redis y listo.");
+{
+  "name": "worker-judicial",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-fetch": "^3.3.2",
+    "redis": "^4.6.10",
+    "jsdom": "^22.1.0",
+    "https-proxy-agent": "^7.0.2"
+  },
+  "scripts": {
+    "start": "node worker.js"
+  }
 }
-
-test();
