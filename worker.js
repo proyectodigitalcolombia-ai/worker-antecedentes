@@ -7,46 +7,43 @@ import { JSDOM } from 'jsdom';
 
 const PORT = process.env.PORT || 10000;
 const REDIS_URL = process.env.REDIS_URL;
-
-// Configuración del Proxy usando tus variables de entorno
 const agent = new HttpsProxyAgent(`http://${process.env.BRIGHT_DATA_USER}:${process.env.BRIGHT_DATA_PASS}@brd.superproxy.io:22225`);
 
 const app = express();
-app.get('/', (req, res) => res.status(200).send('Worker Judicial Activo 🟢'));
+app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
 app.listen(PORT, '0.0.0.0');
 
 const client = redis.createClient({ url: REDIS_URL });
 
 async function consultar(cedula) {
     try {
-        console.log(`🔎 Iniciando consulta para: ${cedula}`);
+        console.log(`🔎 Intentando acceso profundo para: ${cedula}`);
         
         const response = await fetch('https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml', {
             agent,
             headers: {
+                // Forzamos a Bright Data a usar un navegador real y resolver CAPTCHAs
                 'X-BrightData-Render': 'true',
-                'X-BrightData-Country': 'co'
+                'X-BrightData-Country': 'co',
+                'X-BrightData-Wait': '3000', // Espera 3 segundos a que cargue el JS
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
         });
 
         const html = await response.text();
         
-        // Si no hay HTML, salimos sin intentar procesar
-        if (!html) return "ERROR: La página respondió vacío.";
+        // Si sigue llegando vacío, es que la Zona necesita permisos de "Residencial"
+        if (!html || html.length < 500) {
+            return "ERROR: Bloqueo de seguridad (Requiere IP Residencial)";
+        }
 
         const dom = new JSDOM(html);
-        // Usamos ?. para que si algo es 'undefined', no explote el código
-        const textoCompleto = dom.window.document.body?.textContent?.toUpperCase() || "";
+        const texto = dom.window.document.body?.textContent?.toUpperCase() || "";
 
-        console.log("📡 Contenido recibido, analizando palabras clave...");
-
-        if (textoCompleto.includes("NO TIENE ASUNTOS PENDIENTES")) return "SIN ANTECEDENTES ✅";
-        if (textoCompleto.includes("TIENE ASUNTOS PENDIENTES")) return "CON ANTECEDENTES ⚠️";
-        if (textoCompleto.includes("NO ES VÁLIDA")) return "CÉDULA NO VÁLIDA ❌";
+        if (texto.includes("NO TIENE ASUNTOS PENDIENTES")) return "SIN ANTECEDENTES ✅";
+        if (texto.includes("TIENE ASUNTOS PENDIENTES")) return "CON ANTECEDENTES ⚠️";
         
-        // Si llegamos aquí, la página cargó pero quizás mostró un error o un captcha
-        return "PÁGINA CARGADA PERO SIN RESULTADO (Posible bloqueo o Captcha)";
-
+        return "PÁGINA CARGADA (Pero el formulario está vacío)";
     } catch (e) {
         return `ERROR_SISTEMA: ${e.message}`;
     }
@@ -55,18 +52,16 @@ async function consultar(cedula) {
 async function iniciar() {
     try {
         if (!client.isOpen) await client.connect();
-        console.log("📥 Worker conectado a Redis. Esperando tareas...");
-        
+        console.log("📥 Worker Camuflado listo...");
         while (true) {
             const tarea = await client.brPop('cola_consultas', 0);
             if (tarea) {
                 const { cedula } = JSON.parse(tarea.element);
-                const resultado = await consultar(cedula);
-                console.log(`✅ Resultado para ${cedula}: ${resultado}`);
+                const res = await consultar(cedula);
+                console.log(`✅ [${cedula}]: ${res}`);
             }
         }
     } catch (err) {
-        console.error("❌ Error en el bucle principal:", err.message);
         setTimeout(iniciar, 5000);
     }
 }
