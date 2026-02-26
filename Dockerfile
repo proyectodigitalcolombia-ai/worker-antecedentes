@@ -1,20 +1,20 @@
-# Usamos la versión de Node que definimos en tus requerimientos
-FROM node:20-slim
+# 1. Usamos la imagen oficial de Node.js versión 20
+FROM node:20
 
-# Crear directorio de trabajo
+# 2. Creamos la carpeta donde vivirá el código dentro del servidor
 WORKDIR /app
 
-# Copiar archivos de dependencias
+# 3. Copiamos los archivos de configuración de dependencias
 COPY package*.json ./
 
-# Instalar dependencias
+# 4. Instalamos las librerías (incluyendo el proxy-agent y jsdom)
 RUN npm install
 
-# Copiar el resto del código
+# 5. Copiamos el resto del código (tu worker.js)
 COPY . .
 
-# Exponer el puerto para el Health Check de Render
+# 6. Exponemos el puerto que usa Express
 EXPOSE 10000
 
-# Comando para arrancar
+# 7. El comando para arrancar el Worker
 CMD ["npm", "start"]
