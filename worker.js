@@ -10,12 +10,12 @@ const app = express();
 const client = redis.createClient({ url: REDIS_URL });
 
 // Healthcheck para Render
-app.get('/', (req, res) => res.status(200).send('Worker Judicial - Procesando 🟢'));
+app.get('/', (req, res) => res.status(200).send('Worker Activo 🟢'));
 app.listen(PORT, '0.0.0.0');
 
 async function consultar(cedula) {
     try {
-        console.log(`🚀 Iniciando proceso para cédula: ${cedula}`);
+        console.log(`🔎 Procesando cédula: ${cedula}`);
         
         const response = await fetch('https://api.brightdata.com/request', {
             method: 'POST',
@@ -29,51 +29,54 @@ async function consultar(cedula) {
                 format: 'raw',
                 country: 'co',
                 render: true,
-                // Instrucciones para que el navegador de Bright Data interactúe
-                actions: [
-                    { "action": "wait", "selector": "body" },
-                    { "action": "click", "selector": "input[type='checkbox']", "optional": true },
-                    { "action": "click", "selector": "button, input[type='submit']", "optional": true },
-                    { "action": "wait", "timeout": 3000 }
-                ]
+                // Parámetros críticos para evitar el error de 0 caracteres:
+                "dns": "local",
+                "session_id": `session_${cedula}_${Math.random()}`,
+                "timeout": 120000 
             }),
-            timeout: 90000
+            timeout: 95000 
         });
 
         const resText = await response.text();
-        const html = resText.toUpperCase();
         
-        console.log(`📡 Respuesta recibida. Longitud: ${html.length} caracteres.`);
+        if (!resText || resText.length === 0) {
+            console.log(`⚠️ Advertencia: Bright Data respondió vacío (Status ${response.status})`);
+            return "ERROR: Respuesta vacía de la red de proxies.";
+        }
 
-        // Análisis de resultados
+        const html = resText.toUpperCase();
+        console.log(`📡 Recibidos: ${html.length} caracteres.`);
+
+        // Lógica de detección
         if (html.includes("NO TIENE ASUNTOS PENDIENTES")) return "SIN ANTECEDENTES ✅";
         if (html.includes("TIENE ASUNTOS PENDIENTES")) return "CON ANTECEDENTES ⚠️";
         if (html.includes("NO ES VÁLIDA")) return "CÉDULA NO VÁLIDA ❌";
-        
-        // Si no encuentra nada, imprimimos un pedazo para investigar en el log
-        console.log("🔍 Snippet final:", html.substring(0, 300));
-        return "RESULTADO DESCONOCIDO 🤔 (Posible pantalla de captcha o términos)";
+        if (html.includes("TERMINOS Y CONDICIONES") || html.includes("ACEPTAR")) return "BLOQUEADO EN TÉRMINOS 📄";
+
+        console.log("🔍 Muestra del contenido:", html.substring(0, 300));
+        return "RESULTADO DESCONOCIDO 🤔";
 
     } catch (e) {
-        return `ERROR_TECNICO: ${e.message}`;
+        console.error("❌ Error técnico:", e.message);
+        return `ERROR: ${e.message}`;
     }
 }
 
 async function iniciar() {
     try {
         if (!client.isOpen) await client.connect();
-        console.log("📥 Conectado a Redis. Esperando tareas...");
+        console.log("📥 Worker conectado. Escuchando Redis...");
         
         while (true) {
             const tarea = await client.brPop('cola_consultas', 0);
             if (tarea) {
                 const { cedula } = JSON.parse(tarea.element);
-                const res = await consultar(cedula);
-                console.log(`✅ [${cedula}]: ${res}`);
+                const resultado = await consultar(cedula);
+                console.log(`🏁 [${cedula}]: ${resultado}`);
             }
         }
     } catch (err) {
-        console.error("❌ Fallo en el bucle:", err.message);
+        console.error("❌ Error en bucle:", err);
         setTimeout(iniciar, 5000);
     }
 }
