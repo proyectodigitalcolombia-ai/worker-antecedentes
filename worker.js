@@ -1,36 +1,65 @@
-import fetch from 'node-fetch'; // Asegúrate de tenerlo en tu package.json
+import fetch from 'node-fetch';
+import { JSDOM } from 'jsdom'; // Para leer el HTML que nos devuelve Bright Data
 
-const consultarConUnlocker = async (cedula) => {
-  try {
-    console.log(`🚀 Usando Bright Data para desbloquear portal de la Policía...`);
-    
-    const response = await fetch('https://api.brightdata.com/request', {
-      method: 'POST',
-      headers: {
-          'Authorization': 'Bearer TU_API_KEY_AQUÍ', // Reemplaza con tu clave real
-          'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-          zone: 'proyectoantecedentes', 
-          url: 'https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml',
-          country: 'co', // 🇨🇴 CRÍTICO: Forzamos IP de Colombia
-          format: 'json'
-      })
-    });
+const API_KEY = 'TU_BRIGHT_DATA_API_KEY';
+const ZONE = 'proyectoantecedentes';
 
-    const data = await response.json();
-    
-    // Si Bright Data tiene éxito, 'data.content' tendrá el HTML del formulario de cédula
-    if (data.status === 'ok' || response.ok) {
-        console.log("✅ ¡Portal desbloqueado! Ya estamos frente al formulario de cédula.");
-        
-        // Aquí es donde procesas el resultado o usas Puppeteer 
-        // para interactuar con el contenido que te devolvió la API.
-        return data.content; 
-    } else {
-        console.log("❌ Bright Data no pudo desbloquearlo:", data.error || 'Error desconocido');
+async function consultarAntecedentes(cedula) {
+    try {
+        console.log(`🔎 Iniciando consulta para: ${cedula} vía Web Unlocker...`);
+
+        // 1. SOLICITUD A BRIGHT DATA (Paso del formulario de cédula)
+        const response = await fetch('https://api.brightdata.com/request', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                zone: ZONE,
+                url: 'https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml',
+                country: 'co', // 🇨🇴 IP Colombiana
+                format: 'json',
+                // Configuramos el llenado del formulario en la misma petición
+                render: true, // Importante para que Bright Data procese el JS
+                actions: [
+                    { "wait": "#formConsulta:cedula" }, // Esperamos el campo de cédula
+                    { "type": "#formConsulta:cedula", "value": cedula }, // Escribimos la cédula
+                    { "click": "#formConsulta:btnConsultar" }, // Click en el botón final
+                    { "wait": ".ui-messages-info-detail, .ui-messages-error-detail" } // Esperamos el resultado
+                ]
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.status === 'ok' || data.content) {
+            // 2. PARSEAR EL HTML RESULTANTE
+            const dom = new JSDOM(data.content);
+            const doc = dom.window.document;
+
+            // Buscamos el texto que indica si tiene o no antecedentes
+            const resultadoTexto = doc.body.innerText;
+            
+            let estado = "No encontrado";
+            if (resultadoTexto.includes("NO TIENE ASUNTOS PENDIENTES")) {
+                estado = "SIN ANTECEDENTES ✅";
+            } else if (resultadoTexto.includes("TIENE ASUNTOS PENDIENTES")) {
+                estado = "CON ANTECEDENTES ⚠️";
+            } else if (resultadoTexto.includes("no es válida")) {
+                estado = "CÉDULA NO VÁLIDA ❌";
+            }
+
+            console.log(`📊 Resultado para ${cedula}: ${estado}`);
+            return { cedula, estado, fecha: new Date() };
+
+        } else {
+            console.error("❌ Bright Data no pudo completar la acción.");
+            return null;
+        }
+
+    } catch (error) {
+        console.error("❌ Error en la extracción:", error.message);
+        return null;
     }
-  } catch (error) {
-    console.error('❌ Error de conexión con Bright Data:', error.message);
-  }
-};
+}
