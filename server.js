@@ -9,28 +9,34 @@ const client = redis.createClient({ url: REDIS_URL });
 
 app.use(express.json());
 
-// Endpoint para recibir la cédula
+// Endpoint para consultar
 app.get('/consultar/:cedula', async (req, res) => {
     const { cedula } = req.params;
+    if (!cedula) return res.status(400).json({ error: "Cédula requerida" });
+
     try {
         if (!client.isOpen) await client.connect();
         
-        // Guardamos en la cola para el worker
-        await client.lPush('cola_consultas', JSON.stringify({ cedula }));
+        // Enviar a la cola
+        await client.lPush('cola_consultas', JSON.stringify({ 
+            cedula, 
+            timestamp: Date.now() 
+        }));
         
         res.status(200).json({ 
-            mensaje: "Consulta recibida", 
+            mensaje: "Consulta recibida y encolada", 
             cedula,
-            estado: "En cola ⏳" 
+            estado: "Procesando... 🚀" 
         });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error("Error en API:", error);
+        res.status(500).json({ error: "Error de conexión con Redis" });
     }
 });
 
-app.get('/', (req, res) => res.send('Servidor API Judicial Activo 🚀'));
+app.get('/', (req, res) => res.send('🚀 API Judicial Operativa'));
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`API escuchando en puerto ${PORT}`);
-    client.connect().catch(console.error);
+    console.log(`✅ Servidor API corriendo en puerto ${PORT}`);
+    client.connect().catch(err => console.error("❌ Error Redis:", err));
 });
