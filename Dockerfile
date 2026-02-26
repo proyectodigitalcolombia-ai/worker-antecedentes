@@ -1,29 +1,20 @@
-FROM node:20-bookworm
+# Usamos la versión de Node que definimos en tus requerimientos
+FROM node:20-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget gnupg ca-certificates xvfb xauth x11-xkb-utils x11-utils dbus-x11 \
-    xfonts-base xfonts-75dpi xfonts-100dpi \
-    libnss3 libatk-bridge2.0-0 libatk1.0-0 libcups2 libgbm1 \
-    libasound2 libpangocairo-1.0-0 libxss1 libgtk-3-0 libxshmfence1 \
-    fonts-liberation \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/googlechrome-linux-keyring.gpg \
-    && sh -c 'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' \
-    && apt-get update && apt-get install -y google-chrome-stable --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
-
+# Crear directorio de trabajo
 WORKDIR /app
 
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
-ENV DISPLAY=:99
-ENV NODE_VERSION=20
-
+# Copiar archivos de dependencias
 COPY package*.json ./
+
+# Instalar dependencias
 RUN npm install
+
+# Copiar el resto del código
 COPY . .
 
+# Exponer el puerto para el Health Check de Render
 EXPOSE 10000
 
-CMD ["sh", "-c", "Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset & sleep 2 && node worker.js"]
+# Comando para arrancar
+CMD ["npm", "start"]
