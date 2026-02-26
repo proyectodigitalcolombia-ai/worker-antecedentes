@@ -4,20 +4,19 @@ import fetch from 'node-fetch';
 
 const PORT = process.env.PORT || 10000;
 const REDIS_URL = process.env.REDIS_URL;
-// IMPORTANTE: BRIGHT_DATA_PASS debe ser tu API KEY larga (ej: 3cf7...)
+// Este DEBE ser el API Token largo de Bright Data
 const API_KEY = process.env.BRIGHT_DATA_PASS?.trim(); 
 
 const app = express();
 const client = redis.createClient({ url: REDIS_URL });
 
-app.get('/', (req, res) => res.status(200).send('Worker Judicial API Mode v3.0 🟢'));
+app.get('/', (req, res) => res.status(200).send('Worker Judicial API Puerto 7005 Activo 🟢'));
 app.listen(PORT, '0.0.0.0');
 
 async function consultar(cedula) {
     try {
-        console.log(`🚀 Solicitando vía API (Modo Directo) para: ${cedula}`);
+        console.log(`🚀 Consultando Policía (Puerto 7005) para: ${cedula}`);
         
-        // NO USAMOS AGENT AQUÍ. Es una petición HTTP normal a la API de Bright Data.
         const response = await fetch('https://api.brightdata.com/request', {
             method: 'POST',
             headers: {
@@ -28,41 +27,45 @@ async function consultar(cedula) {
                 zone: 'web_unlocker1',
                 url: 'https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml',
                 format: 'raw',
-                country: 'co'
+                country: 'co',
+                // Forzamos a Bright Data a esperar a que el JavaScript cargue
+                render: true 
             }),
             timeout: 90000
         });
 
-        const html = await response.text();
-        console.log(`📡 Status API: ${response.status} | Tamaño: ${html.length} caracteres.`);
-
-        if (html.length > 5000) {
-            const txt = html.toUpperCase();
-            if (txt.includes("NO TIENE ASUNTOS PENDIENTES")) return "SIN ANTECEDENTES ✅";
-            if (txt.includes("TIENE ASUNTOS PENDIENTES")) return "CON ANTECEDENTES ⚠️";
-        }
+        const resText = await response.text();
         
-        if (response.status === 403 || response.status === 401) {
-            return "ERROR: Autenticación de API fallida. Revisa el API KEY en Render.";
+        if (response.status === 200) {
+            console.log(`📡 ÉXITO: Recibidos ${resText.length} caracteres.`);
+            
+            const html = resText.toUpperCase();
+            if (html.includes("NO TIENE ASUNTOS PENDIENTES")) return "SIN ANTECEDENTES ✅";
+            if (html.includes("TIENE ASUNTOS PENDIENTES")) return "CON ANTECEDENTES ⚠️";
+            if (html.includes("NO ES VÁLIDA")) return "CÉDULA NO VÁLIDA ❌";
+            
+            return "ERROR: La página cargó pero no se encontró el resultado esperado.";
+        } else {
+            console.log(`⚠️ Error de API (${response.status}): ${resText}`);
+            return `ERROR API: ${response.status}`;
         }
-
-        return `ERROR: Respuesta insuficiente de la API (${html.length} bytes)`;
     } catch (e) {
-        return `ERROR_API_CRÍTICO: ${e.message}`;
+        console.error("❌ Error en la llamada:", e.message);
+        return `ERROR_TECNICO: ${e.message}`;
     }
 }
 
 async function iniciar() {
     try {
         if (!client.isOpen) await client.connect();
-        console.log("📥 Worker API conectado a Redis. Sin usar proxies.");
+        console.log("📥 Worker listo. Esperando tareas para el puerto 7005...");
         
         while (true) {
             const tarea = await client.brPop('cola_consultas', 0);
             if (tarea) {
                 const { cedula } = JSON.parse(tarea.element);
-                const res = await consultar(cedula);
-                console.log(`✅ [${cedula}]: ${res}`);
+                const resultado = await consultar(cedula);
+                console.log(`✅ [${cedula}]: ${resultado}`);
             }
         }
     } catch (err) {
