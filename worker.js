@@ -3,18 +3,19 @@ import redis from 'redis';
 import fetch from 'node-fetch';
 import { JSDOM } from 'jsdom';
 
-// 1. Configuración
+// --- CONFIGURACIÓN (Variables de Entorno en Render) ---
 const PORT = process.env.PORT || 10000;
 const REDIS_URL = process.env.REDIS_URL;
+// Tu clave API confirmada en el panel
 const BRIGHT_DATA_KEY = '3cf70efc-6366-481e-a02a-ac13eef2307b';
 const BRIGHT_DATA_ZONE = 'proyectoantecedentes';
 
-// 2. Servidor Express para Health Check
+// 1. Servidor Express (Requerido para el Health Check de Render)
 const app = express();
 app.get('/', (req, res) => res.status(200).send('Worker Judicial Activo 🟢'));
-app.listen(PORT, '0.0.0.0', () => console.log(`📡 Servidor en puerto ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`📡 Servidor escuchando en puerto ${PORT}`));
 
-// 3. Cliente Redis
+// 2. Cliente Redis
 const client = redis.createClient({ url: REDIS_URL });
 
 async function iniciarWorker() {
@@ -23,6 +24,7 @@ async function iniciarWorker() {
         console.log("📥 Conectado a Redis. Esperando tareas...");
 
         while (true) {
+            // Extraer la siguiente cédula de la lista 'cola_consultas'
             const tareaRaw = await client.brPop('cola_consultas', 0);
             if (!tareaRaw) continue;
 
@@ -30,11 +32,11 @@ async function iniciarWorker() {
             console.log(`🔎 Procesando Cédula: ${cedula}`);
 
             const resultado = await consultarPolicia(cedula);
-            console.log(`✅ Resultado Final para ${cedula}: ${resultado}`);
+            console.log(`✅ Resultado Final [${cedula}]: ${resultado}`);
         }
     } catch (err) {
-        console.error("❌ Error en el bucle principal:", err.message);
-        setTimeout(iniciarWorker, 5000);
+        console.error("❌ Error en el flujo principal:", err.message);
+        setTimeout(iniciarWorker, 5000); // Reintento automático
     }
 }
 
@@ -49,39 +51,22 @@ async function consultarPolicia(cedula) {
             body: JSON.stringify({
                 zone: BRIGHT_DATA_ZONE,
                 url: 'https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml',
-                country: 'co',
+                country: 'co', // 🇨🇴 Forzamos IP de Colombia
                 format: 'json',
-                render: true,
+                render: true,  // Ejecuta el Javascript de la página
                 actions: [
                     { "wait": "body" },
-                    { "click": ".ui-chkbox-box", "required": false },
+                    // Intentamos marcar el checkbox de aceptación si aparece
+                    { "click": ".ui-chkbox-box", "required": false }, 
                     { "wait": 1000 },
+                    // Escribimos la cédula en el campo de texto
                     { "type": "#formConsulta:cedula", "value": cedula },
+                    // Click en el botón de consulta
                     { "click": "#formConsulta:btnConsultar" },
-                    { "wait": ".ui-messages-info-detail, .ui-messages-error-detail", "timeout": 10000 }
+                    // Esperamos a que aparezca el mensaje de éxito o error
+                    { "wait": ".ui-messages-info-detail, .ui-messages-error-detail", "timeout": 12000 }
                 ]
             })
         });
 
-        const data = await response.json();
-
-        if (data.status !== 'ok' && !data.content) {
-            return `ERROR_BRIGHT_DATA: ${JSON.stringify(data)}`;
-        }
-
-        const dom = new JSDOM(data.content);
-        const textoPagina = dom.window.document.body.innerText.toUpperCase();
-
-        if (textoPagina.includes("NO TIENE ASUNTOS PENDIENTES")) return "SIN ANTECEDENTES ✅";
-        if (textoPagina.includes("TIENE ASUNTOS PENDIENTES")) return "CON ANTECEDENTES ⚠️";
-        if (textoPagina.includes("NO ES VÁLIDA")) return "CÉDULA NO VÁLIDA ❌";
-
-        return "ERROR: No se pudo determinar el estado";
-
-    } catch (e) {
-        return `ERROR_SISTEMA: ${e.message}`;
-    }
-}
-
-// Arrancar el proceso
-iniciarWorker();
+        const data = await response
