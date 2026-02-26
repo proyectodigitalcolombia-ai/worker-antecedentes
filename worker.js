@@ -1,60 +1,55 @@
 import express from 'express';
 import redis from 'redis';
 import fetch from 'node-fetch';
-import pkg from 'https-proxy-agent';
-const { HttpsProxyAgent } = pkg;
 
-// 1. DEFINICIÓN DE VARIABLES (Asegúrate que REDIS_URL esté en Render)
 const PORT = process.env.PORT || 10000;
-const REDIS_URL = process.env.REDIS_URL; 
-const USER = process.env.BRIGHT_DATA_USER?.trim(); 
-const PASS = process.env.BRIGHT_DATA_PASS?.trim();
+const REDIS_URL = process.env.REDIS_URL;
 
-// 2. CONFIGURACIÓN DEL PROXY (Puerto 22225 para Web Unlocker)
-const proxyUrl = `http://${USER}:${PASS}@brd.superproxy.io:22225`;
-const agent = new HttpsProxyAgent(proxyUrl);
-
-// 3. VALIDACIÓN PREVENTIVA
-if (!REDIS_URL) {
-    console.error("❌ ERROR CRÍTICO: La variable REDIS_URL no está definida en Render.");
-    process.exit(1); 
-}
+// En modo API, asegúrate que BRIGHT_DATA_PASS sea tu API KEY (el código largo)
+const API_KEY = process.env.BRIGHT_DATA_PASS?.trim(); 
 
 const app = express();
 const client = redis.createClient({ url: REDIS_URL });
 
-app.get('/', (req, res) => res.status(200).send('Worker Judicial Nativo v2.3 🟢'));
+app.get('/', (req, res) => res.status(200).send('Worker Judicial API Mode 🟢'));
 app.listen(PORT, '0.0.0.0');
 
 async function consultar(cedula) {
     try {
-        console.log(`🚀 Intentando acceso puerto 7005 para: ${cedula}`);
+        console.log(`🚀 Solicitando a Bright Data API para cédula: ${cedula}`);
         
-        const response = await fetch('https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml', {
-            agent,
+        const response = await fetch('https://api.brightdata.com/request', {
+            method: 'POST',
             headers: {
-                'X-BrightData-Country': 'co',
-                'X-BrightData-Render': 'true',
-                'X-Brd-Debug': '1' 
+                'Authorization': `Bearer ${API_KEY}`,
+                'Content-Type': 'application/json'
             },
-            timeout: 60000 
+            body: JSON.stringify({
+                zone: 'web_unlocker1',
+                url: 'https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml',
+                format: 'raw',
+                country: 'co'
+            }),
+            timeout: 80000 // Aumentamos tiempo porque la API procesa el CAPTCHA
         });
 
         const html = await response.text();
-        const brdError = response.headers.get('x-brd-error');
-        
-        console.log(`📡 Status: ${response.status} | Tamaño: ${html.length}`);
-        
-        if (brdError) console.log(`⚠️ Info Proxy: ${brdError}`);
+        console.log(`📡 Status API: ${response.status} | Tamaño: ${html.length}`);
 
         if (html.length > 5000) {
             const txt = html.toUpperCase();
             if (txt.includes("NO TIENE ASUNTOS PENDIENTES")) return "SIN ANTECEDENTES ✅";
             if (txt.includes("TIENE ASUNTOS PENDIENTES")) return "CON ANTECEDENTES ⚠️";
+            if (txt.includes("NO ES VÁLIDA")) return "CÉDULA NO VÁLIDA ❌";
         }
         
-        return `ERROR: Status ${response.status} (${html.length} bytes)`;
+        if (response.status === 403 || response.status === 401) {
+            return "ERROR: Credenciales de API rechazadas (Verifica tu API KEY)";
+        }
+
+        return `ERROR: Respuesta insuficiente (${html.length} bytes)`;
     } catch (e) {
+        console.error("❌ Error API:", e.message);
         return `ERROR_TECNICO: ${e.message}`;
     }
 }
@@ -62,7 +57,7 @@ async function consultar(cedula) {
 async function iniciar() {
     try {
         if (!client.isOpen) await client.connect();
-        console.log("📥 Worker en línea y conectado a Redis.");
+        console.log("📥 Worker API conectado a Redis. Esperando tareas...");
         
         while (true) {
             const tarea = await client.brPop('cola_consultas', 0);
@@ -73,7 +68,7 @@ async function iniciar() {
             }
         }
     } catch (err) {
-        console.error("❌ Fallo en Redis:", err.message);
+        console.error("❌ Fallo en bucle:", err.message);
         setTimeout(iniciar, 5000);
     }
 }
