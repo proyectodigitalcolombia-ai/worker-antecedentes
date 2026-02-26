@@ -4,39 +4,42 @@ import fetch from 'node-fetch';
 import pkg from 'https-proxy-agent';
 const { HttpsProxyAgent } = pkg;
 
-// Configuración del puerto y Redis
 const PORT = process.env.PORT || 10000;
 const REDIS_URL = process.env.REDIS_URL;
 
-// Credenciales validadas en tus imágenes
 const USER = process.env.BRIGHT_DATA_USER?.trim(); 
 const PASS = process.env.BRIGHT_DATA_PASS?.trim();
 
-// Host de alto rendimiento con puerto para Web Unlocker
-const proxyUrl = `http://${USER}:${PASS}@zproxy.lum-superproxy.io:22225`;
+/**
+ * CAMBIO CLAVE: Cambiamos el puerto de 22225 a 24000
+ * Si el puerto 24000 falla, el siguiente a probar es 33335
+ */
+const proxyUrl = `http://${USER}:${PASS}@brd.superproxy.io:24000`;
 const agent = new HttpsProxyAgent(proxyUrl);
 
 const app = express();
-app.get('/', (req, res) => res.status(200).send('Worker Judicial Unlocker Activo 🟢'));
+app.get('/', (req, res) => res.status(200).send('Worker Judicial Unlocker v2.1 🟢'));
 app.listen(PORT, '0.0.0.0');
 
 const client = redis.createClient({ url: REDIS_URL });
 
 async function consultar(cedula) {
     try {
-        console.log(`🚀 Consultando antecedentes para: ${cedula}`);
+        console.log(`🚀 Probando Puerto 24000 para: ${cedula}`);
         
         const response = await fetch('https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml', {
             agent,
             headers: {
-                'X-BrightData-Country': 'co',
-                'X-BrightData-Render': 'true' // Asegura el renderizado completo
+                'X-BrightData-Country': 'co'
             },
             timeout: 60000 
         });
 
+        const brdError = response.headers.get('x-brd-error');
         const html = await response.text();
+        
         console.log(`📡 Status: ${response.status} | Tamaño: ${html.length} caracteres.`);
+        if (brdError) console.log(`⚠️ Mensaje del Proxy: ${brdError}`);
 
         if (html.length > 5000) {
             const txt = html.toUpperCase();
@@ -44,26 +47,20 @@ async function consultar(cedula) {
             if (txt.includes("TIENE ASUNTOS PENDIENTES")) return "CON ANTECEDENTES ⚠️";
         }
         
-        return `ERROR: Respuesta insuficiente (${html.length} bytes)`;
+        return brdError ? `ERROR PROXY: ${brdError}` : `Respuesta insuficiente (${html.length} bytes)`;
     } catch (e) {
         return `ERROR_TECNICO: ${e.message}`;
     }
 }
 
 async function iniciar() {
-    try {
-        if (!client.isOpen) await client.connect();
-        console.log("📥 Esperando tareas en Redis...");
-        while (true) {
-            const tarea = await client.brPop('cola_consultas', 0);
-            if (tarea) {
-                const { cedula } = JSON.parse(tarea.element);
-                const resultado = await consultar(cedula);
-                console.log(`✅ [${cedula}]: ${resultado}`);
-            }
-        }
-    } catch (err) {
-        setTimeout(iniciar, 5000);
+    if (!client.isOpen) await client.connect();
+    console.log("📥 Worker en línea. Puerto 24000 configurado.");
+    while (true) {
+        const tarea = await client.brPop('cola_consultas', 0);
+        const { cedula } = JSON.parse(tarea.element);
+        const resultado = await consultar(cedula);
+        console.log(`✅ [${cedula}]: ${resultado}`);
     }
 }
 
