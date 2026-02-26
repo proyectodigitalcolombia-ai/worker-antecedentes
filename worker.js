@@ -2,26 +2,22 @@ import express from 'express';
 import redis from 'redis';
 import fetch from 'node-fetch';
 
-// Validamos que las variables existan para que no se caiga al iniciar
 const PORT = process.env.PORT || 10000;
 const REDIS_URL = process.env.REDIS_URL;
 const API_KEY = process.env.BRIGHT_DATA_PASS?.trim();
 
-if (!REDIS_URL || !API_KEY) {
-    console.error("❌ ERROR: Faltan variables de entorno (REDIS_URL o BRIGHT_DATA_PASS)");
-    process.exit(1); 
-}
-
 const app = express();
 const client = redis.createClient({ url: REDIS_URL });
 
-// Servidor para Render
-app.get('/', (req, res) => res.status(200).send('Worker Judicial Activo 🟢'));
-app.listen(PORT, '0.0.0.0', () => console.log(`🌍 Healthcheck en puerto ${PORT}`));
+// 1. Servidor de salud para que Render no mate el servicio
+app.get('/', (req, res) => res.status(200).send('Worker Judicial - Procesando 🟢'));
+app.listen(PORT, '0.0.0.0', () => console.log(`🌍 Servidor de salud activo en puerto ${PORT}`));
 
+// 2. Función de consulta optimizada
 async function consultar(cedula) {
     try {
-        console.log(`🚀 Consultando: ${cedula}`);
+        console.log(`🚀 Consultando Policía para: ${cedula}`);
+        
         const response = await fetch('https://api.brightdata.com/request', {
             method: 'POST',
             headers: {
@@ -35,40 +31,50 @@ async function consultar(cedula) {
                 country: 'co',
                 render: true 
             }),
-            timeout: 90000
+            timeout: 80000
         });
 
-        const resText = await response.text();
-        if (response.status === 200) {
-            const html = resText.toUpperCase();
-            if (html.includes("NO TIENE ASUNTOS PENDIENTES")) return "SIN ANTECEDENTES ✅";
-            if (html.includes("TIENE ASUNTOS PENDIENTES")) return "CON ANTECEDENTES ⚠️";
-            return "RESULTADO DESCONOCIDO 🤔";
+        if (response.status !== 200) {
+            const errBody = await response.text();
+            return `ERROR API ${response.status}: ${errBody.substring(0, 50)}`;
         }
-        return `ERROR API ${response.status}`;
+
+        const resText = await response.text();
+        const html = resText.toUpperCase();
+        
+        console.log(`📡 Datos recibidos: ${html.length} caracteres.`);
+
+        // Lógica de detección de resultados
+        if (html.includes("NO TIENE ASUNTOS PENDIENTES")) return "SIN ANTECEDENTES ✅";
+        if (html.includes("TIENE ASUNTOS PENDIENTES")) return "CON ANTECEDENTES ⚠️";
+        if (html.includes("NO ES VÁLIDA")) return "CÉDULA NO VÁLIDA ❌";
+        
+        // Si no detecta palabras clave, nos da una pista del final del documento
+        console.log("🔍 Pista del contenido:", html.substring(html.length - 300));
+        return "RESULTADO DESCONOCIDO 🤔 (Posible bloqueo o página intermedia)";
+
     } catch (e) {
-        return `ERROR: ${e.message}`;
+        console.error("❌ Error en consulta:", e.message);
+        return `ERROR_TECNICO: ${e.message}`;
     }
 }
 
+// 3. Bucle principal de escucha de Redis
 async function iniciar() {
     try {
         client.on('error', (err) => console.log('Redis Error:', err));
         await client.connect();
-        console.log("📥 Conectado a Redis. Esperando tareas...");
+        console.log("📥 Conectado a Redis. Esperando tareas en 'cola_consultas'...");
         
         while (true) {
+            // brPop espera hasta que llegue algo a la lista
             const tarea = await client.brPop('cola_consultas', 0);
             if (tarea) {
                 const { cedula } = JSON.parse(tarea.element);
                 const res = await consultar(cedula);
-                console.log(`✅ [${cedula}]: ${res}`);
+                console.log(`✅ Resultado [${cedula}]: ${res}`);
+                
+                // Opcional: Aquí podrías enviar el resultado a una base de datos o webhook
             }
         }
     } catch (err) {
-        console.error("❌ Error en el bucle principal:", err);
-        setTimeout(iniciar, 5000); // Reintentar si falla
-    }
-}
-
-iniciar();
