@@ -15,22 +15,22 @@ app.get('/consultar/:cedula', async (req, res) => {
     try {
         if (!client.isOpen) await client.connect();
         
-        // Guardamos en la cola para que el worker la procese
+        // Guardamos en la cola para el worker
         await client.lPush('cola_consultas', JSON.stringify({ cedula }));
         
         res.status(200).json({ 
-            mensaje: "Consulta en cola", 
+            mensaje: "Consulta recibida", 
             cedula,
-            estado: "Pendiente ⏳" 
+            estado: "En cola ⏳" 
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-app.get('/', (req, res) => res.send('API Judicial Principal Activa 🚀'));
+app.get('/', (req, res) => res.send('Servidor API Judicial Activo 🚀'));
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`API escuchando en puerto ${PORT}`);
-    client.connect().then(() => console.log("Conectado a Redis ✅"));
+    client.connect().catch(console.error);
 });
