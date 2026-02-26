@@ -9,12 +9,14 @@ const API_KEY = process.env.BRIGHT_DATA_PASS?.trim();
 const app = express();
 const client = redis.createClient({ url: REDIS_URL });
 
+// Healthcheck para Render
 app.get('/', (req, res) => res.status(200).send('Worker Judicial - Procesando 🟢'));
-app.listen(PORT, '0.0.0.0', () => console.log(`🌍 Servidor activo en puerto ${PORT}`));
+app.listen(PORT, '0.0.0.0');
 
 async function consultar(cedula) {
     try {
-        console.log(`🚀 Consultando Policía para: ${cedula}`);
+        console.log(`🚀 Iniciando proceso para cédula: ${cedula}`);
+        
         const response = await fetch('https://api.brightdata.com/request', {
             method: 'POST',
             headers: {
@@ -26,34 +28,40 @@ async function consultar(cedula) {
                 url: 'https://antecedentes.policia.gov.co:7005/WebJudicial/antecedentes.xhtml',
                 format: 'raw',
                 country: 'co',
-                render: true 
+                render: true,
+                // Instrucciones para que el navegador de Bright Data interactúe
+                actions: [
+                    { "action": "wait", "selector": "body" },
+                    { "action": "click", "selector": "input[type='checkbox']", "optional": true },
+                    { "action": "click", "selector": "button, input[type='submit']", "optional": true },
+                    { "action": "wait", "timeout": 3000 }
+                ]
             }),
-            timeout: 80000
+            timeout: 90000
         });
-
-        if (response.status !== 200) {
-            const errBody = await response.text();
-            return `ERROR API ${response.status}: ${errBody.substring(0, 50)}`;
-        }
 
         const resText = await response.text();
         const html = resText.toUpperCase();
-        console.log(`📡 Datos recibidos: ${html.length} caracteres.`);
+        
+        console.log(`📡 Respuesta recibida. Longitud: ${html.length} caracteres.`);
 
+        // Análisis de resultados
         if (html.includes("NO TIENE ASUNTOS PENDIENTES")) return "SIN ANTECEDENTES ✅";
         if (html.includes("TIENE ASUNTOS PENDIENTES")) return "CON ANTECEDENTES ⚠️";
         if (html.includes("NO ES VÁLIDA")) return "CÉDULA NO VÁLIDA ❌";
         
-        return "RESULTADO DESCONOCIDO 🤔";
+        // Si no encuentra nada, imprimimos un pedazo para investigar en el log
+        console.log("🔍 Snippet final:", html.substring(0, 300));
+        return "RESULTADO DESCONOCIDO 🤔 (Posible pantalla de captcha o términos)";
+
     } catch (e) {
-        return `ERROR: ${e.message}`;
+        return `ERROR_TECNICO: ${e.message}`;
     }
 }
 
 async function iniciar() {
     try {
-        client.on('error', (err) => console.log('Redis Error:', err));
-        await client.connect();
+        if (!client.isOpen) await client.connect();
         console.log("📥 Conectado a Redis. Esperando tareas...");
         
         while (true) {
@@ -61,11 +69,11 @@ async function iniciar() {
             if (tarea) {
                 const { cedula } = JSON.parse(tarea.element);
                 const res = await consultar(cedula);
-                console.log(`✅ Resultado [${cedula}]: ${res}`);
+                console.log(`✅ [${cedula}]: ${res}`);
             }
         }
     } catch (err) {
-        console.error("❌ Error en el bucle:", err);
+        console.error("❌ Fallo en el bucle:", err.message);
         setTimeout(iniciar, 5000);
     }
 }
